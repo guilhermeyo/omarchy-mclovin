@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.guilhermeyo.mclovin",
+  "name": "mclovin",
+  "version": "0.1.0",
+  "author": "Guilherme Yamakawa de Oliveira",
+  "license": "MIT",
+  "description": "Choose which browser opens every link. A native picker in the middle of the screen, and rules that remember the choice.",
+  "kinds": ["service", "bar-widget", "overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "overlay": "Picker.qml"
+  },
+  "barWidget": {
+    "displayName": "mclovin",
+    "description": "Shows whether mclovin is handling links; click for stats, rules, and the browser picker.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showCount": false
+    },
+    "schema": [
+      {
+        "key": "showCount",
+        "type": "boolean",
+        "label": "Show today's link count next to the icon",
+        "defaultValue": false
+      }
+    ]
+  }
+}

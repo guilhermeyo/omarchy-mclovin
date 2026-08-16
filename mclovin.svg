@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Square viewBox (64x64) with the landscape card centered vertically
+  (12 units padding top + bottom of the original 40-tall card).
+
+  Square aspect ratio means iced+resvg's `tree.size()` returns 64x64,
+  matching the square widget dimensions used everywhere (picker
+  header, Settings header, About hero). With a landscape viewBox
+  iced+tiny_skia rasterizes the SVG to a different size than the
+  widget bounds, causing overflow into surrounding text. Square fixes
+  it without requiring per-widget aspect-aware sizing.
+
+  Background-aware outline. The card body is fully transparent
+  (only the yellow frame strokes the perimeter), and the "M"
+  letter is masked out of the yellow square so the background
+  bleeds through both the body AND the letter — keeping the
+  logo readable on dark and light themes alike without baking a
+  fixed accent into either region.
+-->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- White = render this area, black = punch a hole. The
+         M-letter path is drawn black on top of a white rect,
+         so the yellow square below the mask shows everywhere
+         EXCEPT the M letter — which lets the background bleed
+         through instead of being filled with a fixed color. -->
+    <mask id="m-cutout">
+      <rect x="7" y="19" width="18" height="26" rx="2" fill="white"/>
+      <path d="M10 23H12L16 28L20 23H22V41H19V29L16 33L13 29V41H10V23Z" fill="black"/>
+    </mask>
+  </defs>
+
+  <rect x="1.5" y="13.5" width="61" height="37" rx="5" fill="none" stroke="#F4CF45" stroke-width="3"/>
+
+  <rect x="7" y="19" width="18" height="26" rx="2" fill="#F4CF45" mask="url(#m-cutout)"/>
+
+  <rect x="31" y="24" width="26" height="4" rx="1" fill="#F4CF45"/>
+  <rect x="31" y="31" width="26" height="4" rx="1" fill="#F4CF45"/>
+  <rect x="31" y="38" width="20" height="4" rx="1" fill="#F4CF45"/>
+</svg>

@@ -1,0 +1,94 @@
+#!/bin/sh
+# XDG handler shim for the mclovin Omarchy plugin.
+#
+# XDG requires an executable on disk to be the registered http/https handler,
+# and the Omarchy shell is a process that is already running — it cannot be the
+# Exec= target. This script is the smallest possible bridge: it hands the URL to
+# the shell over IPC and gets out of the way. All routing logic lives in the
+# plugin's Service.qml.
+#
+# If the shell is not reachable, the link must still open. A swallowed click is
+# worse than the wrong browser, so this falls back to launching a browser
+# directly rather than failing.
+
+set -eu
+
+url=${1:-}
+[ -n "$url" ] || exit 0
+
+config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mclovin/config.json"
+
+# Locate a .desktop by id across the standard data dirs and run its Exec line
+# with the URL substituted. Used only on the fallback path.
+launch_desktop() {
+  id=$1
+  case $id in
+    *.desktop) ;;
+    *) id="$id.desktop" ;;
+  esac
+
+  for dir in \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
+    /usr/local/share/applications \
+    /usr/share/applications \
+    /var/lib/flatpak/exports/share/applications
+  do
+    file="$dir/$id"
+    [ -f "$file" ] || continue
+
+    # First Exec= in the [Desktop Entry] group. Field codes other than the URL
+    # placeholders are dropped, as the desktop entry spec requires.
+    exec_line=$(sed -n 's/^Exec=//p' "$file" | head -n1)
+    [ -n "$exec_line" ] || continue
+
+    quoted=$(printf '%s' "$url" | sed 's/"/\\"/g')
+    cmd=$(printf '%s' "$exec_line" | sed -e "s|%[uUfF]|\"$quoted\"|g" -e 's/%[a-zA-Z]//g')
+
+    setsid /bin/sh -c "$cmd" >/dev/null 2>&1 &
+    return 0
+  done
+
+  return 1
+}
+
+# The happy path. omarchy-shell reports IPC-level failures on stdout with exit
+# 0, so the reply is checked rather than the exit status: Service.qml answers
+# with one of routed/asked/failed/empty.
+if command -v omarchy-shell >/dev/null 2>&1; then
+  reply=$(omarchy-shell mclovin open "$url" 2>/dev/null || true)
+  case $reply in
+    routed|asked) exit 0 ;;
+  esac
+fi
+
+# Shell down, plugin disabled, or the picker could not be summoned.
+if [ -r "$config" ] && command -v jq >/dev/null 2>&1; then
+  fallback=$(jq -r '.fallback // empty' "$config" 2>/dev/null || true)
+  if [ -n "$fallback" ] && launch_desktop "$fallback"; then
+    exit 0
+  fi
+fi
+
+# No configured fallback either: take the first installed web browser that is
+# not this handler.
+for dir in \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
+  /usr/share/applications
+do
+  [ -d "$dir" ] || continue
+  for file in "$dir"/*.desktop; do
+    [ -f "$file" ] || continue
+    case $file in
+      *io.github.guilhermeyo.mclovin.desktop) continue ;;
+    esac
+    grep -qi '^Categories=.*WebBrowser' "$file" || continue
+    if launch_desktop "$(basename "$file")"; then
+      exit 0
+    fi
+  done
+done
+
+if command -v notify-send >/dev/null 2>&1; then
+  notify-send -u critical "mclovin" "Could not open $url — no browser found and the Omarchy shell is not responding."
+fi
+exit 1
