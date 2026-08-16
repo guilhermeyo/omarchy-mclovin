@@ -117,7 +117,7 @@ launch_desktop() {
 # 0, so the reply is checked rather than the exit status: Service.qml answers
 # with one of routed/asked/failed/empty.
 if command -v omarchy-shell >/dev/null 2>&1; then
-  reply=$(omarchy-shell mclovin open "$url" 2>/dev/null || true)
+  reply=$(omarchy-shell io.github.guilhermeyo.mclovin open "$url" 2>/dev/null || true)
   case $reply in
     routed|asked) exit 0 ;;
   esac

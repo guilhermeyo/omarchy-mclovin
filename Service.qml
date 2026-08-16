@@ -22,6 +22,10 @@ Item {
   property var shell: null
   property var manifest: null
 
+  // Set by Panel.qml while the bar widget exists, null the rest of the time.
+  // The panel is optional; the service is not.
+  property var panel: null
+
   readonly property string pluginId: (manifest && manifest.id) || "io.github.guilhermeyo.mclovin"
   readonly property string home: Quickshell.env("HOME")
   readonly property string configDir: home + "/.config/omarchy-mclovin"
@@ -338,6 +342,13 @@ Item {
                         : Router.setRuleAt(root.config, index, rule))
   }
 
+  // The bar widget is optional, so every panel call has to survive its absence.
+  function drivePanel(action) {
+    if (!root.panel || typeof root.panel[action] !== "function") return "no bar widget"
+    root.panel[action]()
+    return "ok"
+  }
+
   // Summoning our own plugin id reaches the overlay, which switches screens on
   // the payload's `mode`.
   function openEditor(index, url) {
@@ -488,14 +499,25 @@ Item {
 
   // --------------------------------------------------------------------- IPC
 
-  // `omarchy-shell mclovin open <url>` — what the .desktop shim calls. Short
-  // target name on purpose: it ends up in a shell script that users read.
+  // One target, named after the plugin id, which is what every first-party
+  // panel and every plugin in the marketplace does. It lives on the service
+  // rather than on Panel.qml — the usual home — because the XDG handler has to
+  // answer even when the bar widget is not on the bar.
+  //
+  // The house convention also puts open/close/show/hide/toggle here for the
+  // panel. `open` is taken: on this plugin it means "open this link", takes a
+  // URL, and is the one call the desktop entry depends on. The panel gets the
+  // suffixed names instead, and no-ops when the widget is absent.
   IpcHandler {
-    target: "mclovin"
+    target: root.pluginId
 
     function open(url: string): string {
       return root.route(url)
     }
+
+    function togglePanel(): string { return root.drivePanel("toggle") }
+    function showPanel(): string { return root.drivePanel("open") }
+    function hidePanel(): string { return root.drivePanel("close") }
 
     // Everything needed to work out why links are not arriving, in one call.
     function status(): string {

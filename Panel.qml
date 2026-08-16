@@ -14,14 +14,22 @@ Panel {
   id: root
   moduleName: "io.github.guilhermeyo.mclovin"
 
-  // A target of its own, separate from the service's `mclovin`, so a keybind
-  // can drop the panel open: `omarchy-shell mclovin-bar toggle`. Summoning the
-  // plugin id instead would reach the picker overlay, which is a different
-  // surface with a different job.
-  ipcTarget: "mclovin-bar"
+  // One IPC target per plugin, named after the plugin id — the shape every
+  // first-party panel and every marketplace plugin uses. `manageIpc: false`
+  // because the handler lives on the service: it has to answer whether or not
+  // this widget is on the bar.
+  ipcTarget: "io.github.guilhermeyo.mclovin"
+  manageIpc: false
 
   readonly property string pluginId: "io.github.guilhermeyo.mclovin"
   readonly property var service: bar?.shell?.serviceFor(pluginId)
+
+  // Lend the service a handle so its IPC can drive this panel while it exists.
+  // The service outlives the widget, so the handle is cleared on the way out
+  // rather than left dangling.
+  onServiceChanged: if (service) service.panel = root
+  Component.onCompleted: if (service) service.panel = root
+  Component.onDestruction: if (service && service.panel === root) service.panel = null
 
   readonly property bool isDefault: service ? service.isDefault : false
   readonly property bool handlerKnown: service ? service.handlerKnown : false

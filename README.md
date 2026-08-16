@@ -102,9 +102,9 @@ with `{url}` in it.
 - A **Try a link…** box that says `matches` or `no match` against what you type.
   For regex rules this replaces the example, since there is no honest way to
   invent a URL from a pattern.
-- A warning when an **earlier rule already catches the link**, naming it:
-  *"Rule 1 (Contains github.com/acme) catches this link first, so this
-  rule would never run for it. Move this rule up."*
+- A warning when **another rule is narrower and takes the link**, naming it and
+  where it goes: *"“Contains github.com/acme” is narrower and takes
+  this link — it opens in Chromium · Work."*
 
 `Ctrl+Enter` saves, `Esc` cancels. You never see the config file.
 
@@ -223,14 +223,26 @@ to the icon. Set it in `~/.config/omarchy/shell.json` on the widget's entry.
 ## IPC
 
 ```bash
-omarchy-shell mclovin open https://example.com   # route a URL
-omarchy-shell mclovin status                     # JSON: handler, browsers, profiles, rules, today
-omarchy-shell mclovin refresh                    # re-read browsers and the default handler
-omarchy-shell mclovin importRules                # import from the CLI's rules.toml
-omarchy-shell mclovin becomeDefault              # register as the http/https handler
-omarchy-shell mclovin restoreDefault firefox     # hand the handler back to a real browser
-omarchy-shell mclovin-bar toggle                 # open the bar drop-down (bind a key to this)
+One target, named after the plugin id.
+
+```bash
+ID=io.github.guilhermeyo.mclovin
+
+omarchy-shell $ID open https://example.com   # route a URL
+omarchy-shell $ID status                     # JSON: handler, browsers, profiles, rules
+omarchy-shell $ID refresh                    # re-read browsers and the default handler
+omarchy-shell $ID importRules                # import from the CLI's rules.toml
+omarchy-shell $ID becomeDefault              # register as the http/https handler
+omarchy-shell $ID restoreDefault firefox     # hand the handler back to a real browser
+omarchy-shell $ID togglePanel                # open the bar drop-down (bind a key to this)
 ```
+
+The handler lives on the service rather than on the panel, which is where every
+other plugin puts it, because it has to answer whether or not the bar widget is
+on the bar. For the same reason the panel calls are `togglePanel` / `showPanel`
+/ `hidePanel` rather than the usual `toggle` / `show` / `hide`: `open` on this
+plugin means "open this link" and takes a URL, and that is the one call the
+desktop entry depends on.
 
 `open` answers `routed` when a rule took it, `asked` when the picker went up,
 and `failed` when neither worked.
@@ -279,7 +291,7 @@ omarchy plugin remove io.github.guilhermeyo.mclovin
 Point the system at a real browser again first, otherwise links have no handler:
 
 ```bash
-omarchy-shell mclovin restoreDefault firefox      # while the plugin is still loaded
+omarchy-shell io.github.guilhermeyo.mclovin restoreDefault firefox
 # or, once it is gone:
 xdg-mime default firefox.desktop x-scheme-handler/http x-scheme-handler/https
 rm ~/.local/share/applications/io.github.guilhermeyo.mclovin.desktop
