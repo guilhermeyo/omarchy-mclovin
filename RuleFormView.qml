@@ -32,6 +32,7 @@ Item {
   property string browserValue: ""
   property string commandText: ""
   property string testUrl: ""
+  property bool wantPrivate: false
 
   readonly property bool creating: ruleIndex < 0
   readonly property var rules: (service && service.rules) || []
@@ -146,6 +147,7 @@ Item {
         root.commandText = ""
         root.browserValue = resolveBrowserValue(existing.browser, existing.profile)
       }
+      root.wantPrivate = existing.private === true
     } else {
       // A new rule seeded from the link in hand: host is the choice people make
       // nine times out of ten, and it is already filled in.
@@ -153,6 +155,7 @@ Item {
       root.advanced = false
       root.targetKind = "browser"
       root.commandText = ""
+      root.wantPrivate = false
       var host = seedUrl ? Router.displayHost(Router.parseUrl(seedUrl)) : ""
       termModel.append({ value: host })
       root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
@@ -181,10 +184,21 @@ Item {
     }
     var id = unpackBrowser(root.browserValue)
     if (!id) return null
-    return Router.makeRule(root.when, t, id, unpackProfile(root.browserValue), "")
+    return Router.makeRule(root.when, t, id, unpackProfile(root.browserValue), "",
+                           root.wantPrivate && root.canGoPrivate)
   }
 
   readonly property bool valid: draftRule !== null
+
+  // Private is a browser flag, so a command rule never offers it — the command
+  // already says how it wants to launch. A browser with no private mode says so
+  // rather than accepting a tick it cannot honour.
+  readonly property bool canGoPrivate: {
+    revision
+    if (root.targetKind !== "browser" || !service) return false
+    var id = unpackBrowser(root.browserValue)
+    return id ? service.supportsPrivate(id) : false
+  }
 
   readonly property string targetLabel: {
     revision
@@ -523,6 +537,26 @@ Item {
           font.pixelSize: Style.font.bodySmall
         }
 
+        Toggle {
+          Layout.fillWidth: true
+          visible: root.targetKind === "browser" && root.browserOptions.length > 0
+          enabled: root.canGoPrivate
+          opacity: root.canGoPrivate ? 1 : 0.5
+          checked: root.wantPrivate && root.canGoPrivate
+          label: "Open in a private window"
+          description: root.canGoPrivate
+            ? "Every link this rule catches opens incognito, in this profile."
+            : (root.targetLabel || "This browser") + " has no private-window flag."
+          foreground: root.foreground
+          accent: root.accent
+          fontFamily: root.fontFamily
+          onClicked: {
+            if (!root.canGoPrivate) return
+            root.wantPrivate = !root.wantPrivate
+            root.revision++
+          }
+        }
+
         TextField {
           Layout.fillWidth: true
           visible: root.targetKind === "command"
@@ -556,8 +590,11 @@ Item {
           Layout.fillWidth: true
           text: {
             if (!root.valid) return "Fill in a term and a destination to see what this catches."
-            if (root.when === Router.WHEN_REGEX) return "Paste a link below to check the pattern."
-            return "A link like " + root.example + " would open in " + root.targetLabel + "."
+            var where = root.targetLabel
+              + (root.wantPrivate && root.canGoPrivate ? ", in a private window" : "")
+            if (root.when === Router.WHEN_REGEX)
+              return "Anything this pattern matches opens in " + where + ". Paste a link below to check it."
+            return "A link like " + root.example + " would open in " + where + "."
           }
           color: root.valid ? root.foreground : root.dim
           font.family: root.fontFamily

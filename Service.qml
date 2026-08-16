@@ -273,11 +273,16 @@ Item {
 
   // Called by the picker once the user has chosen. Kept here rather than in the
   // overlay so the launch/record/remember sequence has one implementation.
-  function choose(browserId, url, rememberPattern, profile) {
-    var target = { browser: browserId, profile: String(profile || "") }
+  function choose(browserId, url, rememberPattern, profile, wantPrivate) {
+    var target = {
+      browser: browserId,
+      profile: String(profile || ""),
+      private: wantPrivate === true
+    }
     if (!launch(target, url)) return false
     if (rememberPattern) {
-      setConfig(Router.upsertRule(root.config, rememberPattern, browserId, target.profile))
+      setConfig(Router.upsertRule(root.config, rememberPattern, browserId,
+                                  target.profile, target.private))
       record(targetName(target), rememberPattern, url)
     } else {
       record(targetName(target), "", url)
@@ -285,7 +290,7 @@ Item {
     return true
   }
 
-  // A target is a rule-shaped object: either {command} or {browser, profile}.
+  // A target is a rule-shaped object: {command}, or {browser, profile, private}.
   function launch(target, url) {
     if (!target) return false
 
@@ -298,25 +303,32 @@ Item {
 
     var entry = browserById(target.browser)
     if (!entry) return false
-    var argv = Browsers.expandExec(entry.execString, url)
-    if (!argv.length) return false
 
-    if (target.profile) {
-      var dir = Browsers.resolveProfileDirectory(profilesFor(entry.id), target.profile)
-      argv = Browsers.applyProfile(argv, entry.id, dir)
-    }
+    var dir = target.profile
+      ? Browsers.resolveProfileDirectory(profilesFor(entry.id), target.profile)
+      : ""
+    var argv = Browsers.launchArgs(entry.id, entry.execString, url, dir, target.private === true)
+    if (!argv.length) return false
 
     Quickshell.execDetached(argv)
     return true
   }
 
-  // What the stats show for a target: the browser's display name, with the
-  // profile when one is pinned, or the bare command for a command rule.
+  function supportsPrivate(browserId) {
+    var entry = browserById(browserId)
+    return entry ? Browsers.supportsPrivate(entry.id) : false
+  }
+
+  // What the stats and the rule list show for a target: the browser's display
+  // name, the pinned profile, and whether it opens private — all on one line,
+  // so the rule rows keep their two-line shape.
   function targetName(target) {
     if (!target) return ""
     if (target.command) return String(target.command).split(" ")[0]
     var name = browserName(target.browser)
-    return target.profile ? name + " · " + target.profile : name
+    if (target.profile) name += " · " + target.profile
+    if (target.private) name += " · private"
+    return name
   }
 
   function record(name, ruleLabel, url) {

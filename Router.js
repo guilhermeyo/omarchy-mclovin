@@ -374,6 +374,10 @@ function normalizeRule(raw) {
     out.browser = browser
     var profile = String(raw.profile || "").trim()
     if (profile) out.profile = profile
+    // Only meaningful next to a browser. A command rule already spells out how
+    // it wants to be launched, and bolting --incognito onto an arbitrary
+    // command line would be a guess.
+    if (raw.private === true || String(raw.private) === "true") out.private = true
   } else {
     return null
   }
@@ -381,22 +385,23 @@ function normalizeRule(raw) {
   return out
 }
 
-function makeRule(when, terms, browser, profile, command) {
+function makeRule(when, terms, browser, profile, command, wantPrivate) {
   return normalizeRule({
     when: when,
     terms: terms,
     browser: browser,
     profile: profile,
-    command: command
+    command: command,
+    private: wantPrivate === true
   })
 }
 
 // Replacing an existing rule for the same matcher rather than appending keeps
 // "remember this" idempotent — picking a different browser for a host you
 // already have a rule for updates it instead of adding a shadowed duplicate.
-function upsertRule(config, match, browser, profile) {
+function upsertRule(config, match, browser, profile, wantPrivate) {
   var next = normalizeConfig(config)
-  var candidate = makeRule(WHEN_HOST, [match], browser, profile, "")
+  var candidate = makeRule(WHEN_HOST, [match], browser, profile, "", wantPrivate)
   if (!candidate) return next
   return replaceOrAppend(next, candidate)
 }

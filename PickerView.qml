@@ -16,7 +16,12 @@ Item {
   property int selectedIndex: 0
   property bool remember: false
 
-  signal chosen(string browserId, string profile, bool remember)
+  // Separate from `remember` on purpose. Private is a property of this one
+  // open; remembering is a property of every future one. Ticking both is
+  // allowed and says so in the remember line, but neither implies the other.
+  property bool wantPrivate: false
+
+  signal chosen(string browserId, string profile, bool remember, bool wantPrivate)
   signal cancelled()
   signal ruleRequested()
 
@@ -39,13 +44,21 @@ Item {
     ? (selectedRow.profile ? selectedRow.name + " · " + selectedRow.profile : selectedRow.name)
     : ""
 
+  // Whether the highlighted browser has a private mode at all. Offering the
+  // toggle on a browser that cannot honour it would be a lie the user only
+  // discovers after the window is already open.
+  readonly property bool canGoPrivate: selectedRow && service
+    ? service.supportsPrivate(String(selectedRow.browserId))
+    : false
+
   function reset(nextUrl) {
     root.url = String(nextUrl || "")
     root.filterText = ""
     root.selectedIndex = 0
-    // Remembering is a deliberate act; a sticky toggle would quietly write a
-    // rule on the next unrelated link.
+    // Both reset every time. A sticky toggle would quietly write a rule, or
+    // quietly stop writing one, on the next unrelated link.
     root.remember = false
+    root.wantPrivate = false
   }
 
   function takeFocus() { keyCatcher.forceActiveFocus() }
@@ -62,10 +75,14 @@ Item {
     list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
   }
 
-  function activate(index) {
+  function activate(index, forcePrivate) {
     var row = root.rows[index]
     if (!row) return
-    root.chosen(String(row.browserId), String(row.profile || ""), root.remember && root.host !== "" && root.url !== "")
+    var goPrivate = (forcePrivate === true || root.wantPrivate)
+      && (service ? service.supportsPrivate(String(row.browserId)) : false)
+    root.chosen(String(row.browserId), String(row.profile || ""),
+                root.remember && root.host !== "" && root.url !== "",
+                goPrivate)
   }
 
   // Util.fileUrl rather than a hand-built file:// prefix: it percent-encodes
@@ -103,7 +120,12 @@ Item {
         root.move(-1)
         event.accepted = true
       } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-        root.activate(root.selectedIndex)
+        // Shift opens this one privately without arming the toggle, so the
+        // fast path cannot leave state behind for the next link.
+        root.activate(root.selectedIndex, (event.modifiers & Qt.ShiftModifier) !== 0)
+        event.accepted = true
+      } else if (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier)) {
+        if (root.canGoPrivate) root.wantPrivate = !root.wantPrivate
         event.accepted = true
       } else if (Util.editsFilter(event, root.filterText)) {
         root.setFilter(Util.editedFilter(event, root.filterText))
@@ -172,8 +194,8 @@ Item {
 
     Item {
       width: parent.width
-      height: parent.height - header.height - rememberRow.height - footer.height
-              - Style.spacing.md * 4 - Style.space(24)
+      height: parent.height - header.height - privateRow.height - rememberRow.height
+              - footer.height - Style.spacing.md * 5 - Style.space(24)
 
       ListView {
         id: list
@@ -262,6 +284,52 @@ Item {
       }
     }
 
+    // Private first, remember second: this open, then every open after it.
+    Rectangle {
+      id: privateRow
+      width: parent.width
+      height: root.url ? root.rowHeight : 0
+      visible: root.url !== ""
+      radius: Style.cornerRadius
+      color: root.wantPrivate ? root.selectedBackground : "transparent"
+      opacity: root.canGoPrivate ? 1 : 0.5
+
+      Row {
+        anchors.fill: parent
+        anchors.leftMargin: Style.space(10)
+        anchors.rightMargin: Style.space(10)
+        spacing: Style.space(10)
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.wantPrivate ? "󰄲" : "󰄱"
+          color: root.wantPrivate ? root.selectedText : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.icon
+        }
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          width: privateRow.width - Style.space(20) - Style.font.icon - Style.space(10)
+          text: root.canGoPrivate
+            ? "Open in a private window, just this once"
+            : (root.selectedRow ? root.selectedRow.name + " has no private mode" : "No private mode")
+          color: root.wantPrivate ? root.selectedText : root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          elide: Text.ElideRight
+        }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        enabled: root.canGoPrivate
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.wantPrivate = !root.wantPrivate
+      }
+    }
+
     Rectangle {
       id: rememberRow
       width: parent.width
@@ -269,6 +337,11 @@ Item {
       visible: root.url !== ""
       radius: Style.cornerRadius
       color: root.remember ? root.selectedBackground : "transparent"
+      // Stated on the row that writes the rule, because that is the surprising
+      // combination: the private tick above is about this open, but together
+      // they mean every future link to this host opens private too.
+      readonly property string privateSuffix:
+        (root.remember && root.wantPrivate && root.canGoPrivate) ? " — as a private rule" : ""
 
       Row {
         anchors.fill: parent
@@ -287,9 +360,10 @@ Item {
         Text {
           anchors.verticalCenter: parent.verticalCenter
           width: rememberRow.width - Style.space(20) - Style.font.icon - Style.space(10)
-          text: root.selectedLabel
-            ? "Always use " + root.selectedLabel + " for " + root.host
-            : "Always use this browser for " + root.host
+          text: (root.selectedLabel
+                  ? "Always use " + root.selectedLabel + " for " + root.host
+                  : "Always use this browser for " + root.host)
+                + rememberRow.privateSuffix
           color: root.remember ? root.selectedText : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -309,7 +383,7 @@ Item {
       id: footer
       width: parent.width
       text: root.url
-        ? "Enter open  ·  Ctrl+R remember  ·  Ctrl+N new rule  ·  Esc cancel"
+        ? "Enter open  ·  Shift+Enter private  ·  Ctrl+R remember  ·  Esc cancel"
         : "Enter open  ·  Esc cancel"
       color: root.dim
       font.family: root.fontFamily

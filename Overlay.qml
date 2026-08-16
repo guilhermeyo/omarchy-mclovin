@@ -137,9 +137,10 @@ Item {
 
         service: root.service
         onCancelled: root.dismiss()
-        onChosen: function(browserId, profile, remember) {
+        onChosen: function(browserId, profile, remember, wantPrivate) {
           var pattern = remember ? Router.displayHost(Router.parseUrl(picker.url)) : ""
-          if (root.service) root.service.choose(browserId, picker.url, pattern, profile)
+          if (root.service)
+            root.service.choose(browserId, picker.url, pattern, profile, wantPrivate)
           root.dismiss()
         }
         onRuleRequested: root.editRuleFor(-1, picker.url)

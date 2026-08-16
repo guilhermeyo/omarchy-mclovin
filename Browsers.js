@@ -251,28 +251,52 @@ function parseFirefoxGroups(stdout) {
   return out
 }
 
-// The flag has to land right after the binary, before any URL: Chromium hands
-// a URL to an already-running process and only honours the profile when the
-// flag precedes it. Same reasoning applies to Firefox.
-function applyProfile(argv, browserId, profileDirectory) {
-  if (!profileDirectory || argv.length === 0) return argv
-  var out = argv.slice()
-
-  if (isChromiumFamily(browserId)) {
-    out.splice(1, 0, "--profile-directory=" + profileDirectory)
-    return out
-  }
+// Flags have to land right after the binary, before any URL: Chromium hands a
+// URL to an already-running process and only honours them when they precede it.
+// Same reasoning applies to Firefox.
+function profileArgs(browserId, profileDirectory) {
+  if (!profileDirectory) return []
+  if (isChromiumFamily(browserId)) return ["--profile-directory=" + profileDirectory]
 
   // An absolute path came from the SQLite store and is the only handle those
   // profiles have; a bare name came from profiles.ini and `-P` resolves it.
-  if (profileDirectory.charAt(0) === "/") {
-    out.splice(1, 0, "--profile")
-    out.splice(2, 0, profileDirectory)
-  } else {
-    out.splice(1, 0, "-P")
-    out.splice(2, 0, profileDirectory)
+  return profileDirectory.charAt(0) === "/"
+    ? ["--profile", profileDirectory]
+    : ["-P", profileDirectory]
+}
+
+// ------------------------------------------------------------------- private
+//
+// Not guessed: each of these is the Exec line the browser's own
+// `[Desktop Action new-private-window]` runs, read off the installed .desktop.
+// A browser with no entry here gets nothing, and the UI says so rather than
+// opening an ordinary window and calling it private.
+function privateFlag(browserId) {
+  if (isChromiumFamily(browserId)) return "--incognito"
+  if (isFirefoxFamily(browserId)) return "--private-window"
+  return ""
+}
+
+function supportsPrivate(browserId) { return privateFlag(browserId) !== "" }
+
+// Profile and private compose. Verified on Firefox, where both are visible at
+// once — a window launched with `--profile <path> --private-window` titles
+// itself "… — <profile> — Mozilla Firefox Private Browsing". Chromium's
+// incognito is per-profile by design and its window exposes no state to read
+// back, so that family rests on the vendor's own flag rather than on a
+// measurement. Profile args come first, which is the order that was tested.
+function launchArgs(browserId, execString, url, profileDirectory, wantPrivate) {
+  var argv = expandExec(execString, url)
+  if (argv.length === 0) return argv
+
+  var flags = profileArgs(browserId, profileDirectory)
+  if (wantPrivate) {
+    var flag = privateFlag(browserId)
+    if (flag) flags.push(flag)
   }
-  return out
+  if (flags.length === 0) return argv
+
+  return [argv[0]].concat(flags, argv.slice(1))
 }
 
 // ------------------------------------------------------------------- browsers

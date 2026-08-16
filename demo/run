@@ -211,8 +211,10 @@ shot picker.png
 HOME="$demo_home" omarchy-shell shell hide "$plugin_id" >/dev/null
 sleep 1
 
+# Rule 2 after the specificity sort is the private one (hedge.example), so the form preview
+# shows the private toggle on rather than an empty new rule.
 HOME="$demo_home" omarchy-shell shell summon "$plugin_id" \
-  '{"mode":"editor","ruleIndex":-1,"url":"https://mail.example.com/inbox"}' >/dev/null
+  '{"mode":"editor","ruleIndex":2}' >/dev/null
 sleep 2
 shot form.png
 HOME="$demo_home" omarchy-shell shell hide "$plugin_id" >/dev/null

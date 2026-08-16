@@ -65,6 +65,8 @@ which is not a choice.
 | type | filter across browser name, profile name, and desktop id |
 | `↑` `↓` `Tab` | move |
 | `Enter` | open the link in the highlighted browser and profile |
+| `Shift+Enter` | open it in a **private window**, just this once |
+| `Ctrl+P` | tick the private box without opening yet |
 | `Ctrl+R` | toggle "always use <browser · profile> for <host>" |
 | `Esc` | clear the filter, then cancel |
 
@@ -79,6 +81,42 @@ Firefox profile rows and nothing else.
 **Rules.** Ticking the remember box in the picker writes a rule for that host.
 Everything else happens in the rule form, which is the bar widget's drop-down →
 **Add rule**, or clicking any rule in the list to edit it.
+
+## Private windows
+
+Two separate things, deliberately not the same control.
+
+**Just this link.** `Shift+Enter` in the picker, or the *Open in a private
+window, just this once* box above the remember line. Both reset every time the
+picker opens, so a private link cannot leave the toggle armed for the next one.
+
+**Always, for this site.** A rule can be private: *Open in a private window* in
+the rule form. Every link it catches opens incognito, in that browser and
+profile. The rule list marks it — `Firefox · Personal · private` on the second
+line — so it is visible without opening anything.
+
+Tick both in the picker and the remember line says so out loud: *"Always use
+Firefox · Personal for hedge.example — as a private rule."* Nothing becomes a
+private rule by accident.
+
+The flags are each browser's own, read off the `[Desktop Action
+new-private-window]` group in its installed desktop entry rather than guessed:
+
+| Browser | Flag |
+|---|---|
+| Chromium, Chrome, Brave, Edge, Vivaldi | `--incognito` |
+| Firefox and friends | `--private-window` |
+
+Profile and private compose. On Firefox both are visible at once — a window
+launched into a profile privately titles itself *"… — Personal — Mozilla
+Firefox Private Browsing"*, which is how this was verified. Chromium's incognito
+is per-profile by design, but its windows expose no state to read back, so that
+family rests on the vendor's own flag rather than on a measurement.
+
+A browser with no private flag is not offered one: the toggle greys out and says
+so instead of opening an ordinary window and calling it private. Command rules
+have no private option either — a command line already states how it wants to
+launch, and appending `--incognito` to an arbitrary one would be a guess.
 
 ## The rule form
 
@@ -167,6 +205,7 @@ editing it by hand still works — the plugin watches it and reloads.
     { "when": "startsWith", "terms": ["github.com/acme"], "browser": "chromium", "profile": "Work" },
     { "when": "host", "terms": ["example.com", "example.org"], "browser": "firefox" },
     { "when": "contains", "terms": ["zoom.us"], "command": "brave {url}" },
+    { "when": "host", "terms": ["hedge.example"], "browser": "firefox", "profile": "Personal", "private": true },
     { "when": "regex", "terms": ["^https?://(\\w+)\\.internal\\."], "browser": "chromium" }
   ]
 }
@@ -187,6 +226,8 @@ Targets, one per rule:
   profile switcher does ("Work", not "Profile 3"); mclovin resolves the mapping
   itself. Chromium-family gets `--profile-directory`, Firefox gets `--profile`
   with the profile's path, or `-P` for the older named profiles.
+- `private` — optional, alongside `browser`. Opens every link the rule catches
+  in a private window. Not available next to `command`.
 - `command` — a raw command line with `{url}` where the link goes, for anything
   that is not a plain browser.
 

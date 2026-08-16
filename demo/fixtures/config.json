@@ -3,9 +3,48 @@
   "fallback": "",
   "webapp": "",
   "rules": [
-    { "when": "startsWith", "terms": ["https://mail."], "browser": "google-chrome", "profile": "Design" },
-    { "when": "contains", "terms": ["docs.google.com", "drive.google.com"], "browser": "chromium", "profile": "Work" },
-    { "when": "host", "terms": ["github.com"], "browser": "firefox", "profile": "Personal" },
-    { "when": "contains", "terms": ["invoice"], "browser": "chromium", "profile": "Work" }
+    {
+      "when": "startsWith",
+      "terms": [
+        "https://mail."
+      ],
+      "browser": "google-chrome",
+      "profile": "Design"
+    },
+    {
+      "when": "contains",
+      "terms": [
+        "docs.google.com",
+        "drive.google.com"
+      ],
+      "browser": "chromium",
+      "profile": "Work"
+    },
+    {
+      "when": "host",
+      "terms": [
+        "github.com"
+      ],
+      "browser": "firefox",
+      "profile": "Personal"
+    },
+    {
+      "when": "contains",
+      "terms": [
+        "invoice"
+      ],
+      "browser": "chromium",
+      "profile": "Work",
+      "private": true
+    },
+    {
+      "when": "host",
+      "terms": [
+        "hedge.example"
+      ],
+      "browser": "firefox",
+      "profile": "Personal",
+      "private": true
+    }
   ]
 }
