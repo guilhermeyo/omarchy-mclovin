@@ -89,6 +89,25 @@ Item {
     return bar === -1 ? "" : v.slice(bar + 1)
   }
 
+  // A rule can name a target the picker does not offer as its own row: a
+  // browser with no profile, when that browser has profiles, has no bare entry
+  // in the list. Without this the dropdown falls back to printing its own raw
+  // value ("brave-browser|") and the preview loses the destination entirely.
+  // Prefer the exact pair, then any row for the same browser, then nothing.
+  function resolveBrowserValue(browserId, profile) {
+    var wanted = packTarget(browserId, profile)
+    var options = root.browserOptions
+    var i
+    for (i = 0; i < options.length; i++) {
+      if (options[i].value === wanted) return wanted
+    }
+    var id = String(browserId || "")
+    for (i = 0; i < options.length; i++) {
+      if (unpackBrowser(options[i].value) === id) return options[i].value
+    }
+    return options.length ? options[0].value : ""
+  }
+
   readonly property var browserOptions: {
     revision
     var rows = (service && service.pickerEntries) || []
@@ -125,7 +144,7 @@ Item {
       } else {
         root.targetKind = "browser"
         root.commandText = ""
-        root.browserValue = packTarget(existing.browser, existing.profile)
+        root.browserValue = resolveBrowserValue(existing.browser, existing.profile)
       }
     } else {
       // A new rule seeded from the link in hand: host is the choice people make

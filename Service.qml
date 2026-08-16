@@ -1,7 +1,10 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 import "Router.js" as Router
+import "Browsers.js" as Browsers
+import "Import.js" as Import
 
 // Headless singleton that owns everything stateful: the rules, the stats, the
 // list of installed browsers, and the IPC entry point the XDG handler calls.
@@ -61,9 +64,9 @@ Item {
     var values = (DesktopEntries.applications && DesktopEntries.applications.values) || []
     var out = []
     for (var i = 0; i < values.length; i++) {
-      if (Router.isBrowserEntry(values[i], root.desktopId)) out.push(values[i])
+      if (Browsers.isBrowserEntry(values[i], root.desktopId)) out.push(values[i])
     }
-    root.browsers = Router.sortBrowsers(out)
+    root.browsers = Browsers.sortBrowsers(out)
   }
 
   function browserById(id) {
@@ -104,12 +107,12 @@ Item {
     for (var i = 0; i < root.browsers.length; i++) {
       var id = String(root.browsers[i].id)
       var rels, j
-      if (Router.isChromiumFamily(id)) {
-        rels = Router.localStateCandidates(id)
+      if (Browsers.isChromiumFamily(id)) {
+        rels = Browsers.localStateCandidates(id)
         for (j = 0; j < rels.length; j++)
           out.push({ browser: id, kind: "chromium", path: root.home + "/.config/" + rels[j] })
-      } else if (Router.isFirefoxFamily(id)) {
-        rels = Router.firefoxProfilesPaths(id)
+      } else if (Browsers.isFirefoxFamily(id)) {
+        rels = Browsers.firefoxProfilesPaths(id)
         for (j = 0; j < rels.length; j++)
           out.push({ browser: id, kind: "firefox", path: root.home + "/" + rels[j] })
       }
@@ -119,7 +122,7 @@ Item {
 
   // What the picker lists: one row per browser, or one row per profile when a
   // browser has them.
-  readonly property var pickerEntries: Router.pickerEntries(root.browsers, root.profilesByBrowser)
+  readonly property var pickerEntries: Browsers.pickerEntries(root.browsers, root.profilesByBrowser)
 
   // Candidates are tried in order and the first one holding profiles wins, so a
   // later empty or missing file must not clear what an earlier one found. The
@@ -161,8 +164,8 @@ Item {
         watchChanges: true
         printErrors: false
         onLoaded: root.setProfiles(modelData.browser, modelData.kind === "firefox"
-          ? Router.parseFirefoxProfiles(text())
-          : Router.parseProfileEntries(text()))
+          ? Browsers.parseFirefoxProfiles(text())
+          : Browsers.parseProfileEntries(text()))
         onFileChanged: reload()
       }
     }
@@ -177,7 +180,7 @@ Item {
     var out = []
     for (var i = 0; i < root.browsers.length; i++) {
       var id = String(root.browsers[i].id)
-      if (Router.isFirefoxFamily(id)) out.push(id)
+      if (Browsers.isFirefoxFamily(id)) out.push(id)
     }
     return out
   }
@@ -197,7 +200,7 @@ Item {
       required property var modelData
 
       readonly property var baseDirs: {
-        var rels = Router.firefoxBaseDirs(modelData)
+        var rels = Browsers.firefoxBaseDirs(modelData)
         var out = []
         for (var i = 0; i < rels.length; i++) out.push(root.home + "/" + rels[i])
         return out
@@ -221,7 +224,7 @@ Item {
         ].concat(baseDirs)
 
         stdout: StdioCollector {
-          onStreamFinished: root.setProfiles(modelData, Router.parseFirefoxGroups(text), true)
+          onStreamFinished: root.setProfiles(modelData, Browsers.parseFirefoxGroups(text), true)
         }
       }
     }
@@ -283,7 +286,7 @@ Item {
     if (!target) return false
 
     if (target.command) {
-      var cmdArgv = Router.expandCommand(target.command, url)
+      var cmdArgv = Browsers.expandCommand(target.command, url)
       if (!cmdArgv.length) return false
       Quickshell.execDetached(cmdArgv)
       return true
@@ -291,12 +294,12 @@ Item {
 
     var entry = browserById(target.browser)
     if (!entry) return false
-    var argv = Router.expandExec(entry.execString, url)
+    var argv = Browsers.expandExec(entry.execString, url)
     if (!argv.length) return false
 
     if (target.profile) {
-      var dir = Router.resolveProfileDirectory(profilesFor(entry.id), target.profile)
-      argv = Router.applyProfile(argv, entry.id, dir)
+      var dir = Browsers.resolveProfileDirectory(profilesFor(entry.id), target.profile)
+      argv = Browsers.applyProfile(argv, entry.id, dir)
     }
 
     Quickshell.execDetached(argv)
@@ -326,9 +329,6 @@ Item {
     configFile.setText(JSON.stringify(root.config, null, 2) + "\n")
   }
 
-  function addRule(match, browserId, profile) {
-    setConfig(Router.upsertRule(root.config, match, browserId, profile))
-  }
   function removeRule(index) { setConfig(Router.removeRuleAt(root.config, index)) }
 
   // The form's one write. A negative index means "new"; anything else replaces
@@ -348,12 +348,6 @@ Item {
       url: String(url || "")
     })) === true
   }
-  function setFallback(browserId) {
-    var next = Router.normalizeConfig(root.config)
-    next.fallback = String(browserId || "")
-    setConfig(next)
-  }
-
   // ------------------------------------------------- import from the CLI
 
   // The mclovin CLI keeps its rules in TOML at a fixed path. Reading it is a
@@ -364,12 +358,12 @@ Item {
 
   // Only what is not already here, so the offer disappears once taken instead
   // of sitting in the panel forever inviting a no-op.
-  readonly property int importableCount: Router.countNewRules(root.config, root.importable, root.browsers)
+  readonly property int importableCount: Import.countNewRules(root.config, root.importable, root.browsers)
 
   function importFromMclovin() {
     var pending = root.importableCount
     if (pending === 0) return 0
-    setConfig(Router.mergeImported(root.config, root.importable, root.browsers))
+    setConfig(Import.mergeImported(root.config, root.importable, root.browsers))
     return pending
   }
 
@@ -377,7 +371,7 @@ Item {
     path: root.mclovinTomlPath
     watchChanges: true
     printErrors: false
-    onLoaded: root.importable = Router.parseMclovinToml(text())
+    onLoaded: root.importable = Import.parseMclovinToml(text())
     onFileChanged: reload()
     onLoadFailed: root.importable = ({ rules: [], fallback: "", skipped: 0 })
   }
@@ -442,8 +436,8 @@ Item {
   Process {
     id: registerHandler
     command: ["sh", "-c",
-      "update-desktop-database " + shq(root.applicationsDir) + " 2>/dev/null; "
-      + "xdg-mime default " + shq(root.desktopId) + " x-scheme-handler/http x-scheme-handler/https"]
+      "update-desktop-database " + Util.shellQuote(root.applicationsDir) + " 2>/dev/null; "
+      + "xdg-mime default " + Util.shellQuote(root.desktopId) + " x-scheme-handler/http x-scheme-handler/https"]
     onExited: root.refreshHandler()
   }
 
@@ -453,10 +447,6 @@ Item {
     command: ["xdg-mime", "default", desktopId, "x-scheme-handler/http", "x-scheme-handler/https"]
     onExited: root.refreshHandler()
   }
-
-  // Single-quote for `sh -c`. Paths under $HOME rarely need it, but a username
-  // with a space would otherwise silently register a broken handler.
-  function shq(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'" }
 
   // ------------------------------------------------------------------- disk
 
@@ -494,15 +484,6 @@ Item {
     path: root.desktopPath
     atomicWrites: true
     printErrors: false
-  }
-
-  // Roll the daily counters over without waiting for the next click, so a bar
-  // widget left open past midnight does not keep showing yesterday's total.
-  Timer {
-    interval: 60000
-    running: true
-    repeat: true
-    onTriggered: if (root.stats.date !== root.today()) root.stats = Router.emptyStats(root.today())
   }
 
   // --------------------------------------------------------------------- IPC

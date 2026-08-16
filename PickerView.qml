@@ -3,9 +3,10 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import "Router.js" as Router
+import "Browsers.js" as Browsers
 
 // The browser picker screen. Type to filter, arrows to move, Enter to open.
-// Rows are browser+profile pairs — see Router.pickerEntries for why.
+// Rows are browser+profile pairs — see Browsers.pickerEntries for why.
 Item {
   id: root
 
@@ -22,7 +23,7 @@ Item {
   readonly property var parsed: Router.parseUrl(root.url)
   readonly property string host: Router.displayHost(root.parsed)
   readonly property var allRows: (service && service.pickerEntries) || []
-  readonly property var rows: Router.filterPickerEntries(root.allRows, root.filterText)
+  readonly property var rows: Browsers.filterPickerEntries(root.allRows, root.filterText)
 
   readonly property color foreground: Color.menu.text
   readonly property color selectedBackground: Color.menu.selectedBackground
@@ -67,10 +68,13 @@ Item {
     root.chosen(String(row.browserId), String(row.profile || ""), root.remember && root.host !== "" && root.url !== "")
   }
 
+  // Util.fileUrl rather than a hand-built file:// prefix: it percent-encodes
+  // each path segment, which a browser installed under a path with a space
+  // needs and a bare concatenation gets wrong.
   function iconFor(row) {
     var name = String((row && row.icon) || "")
     if (!name) return Quickshell.iconPath("application-x-executable", true)
-    if (name.charAt(0) === "/") return "file://" + name
+    if (name.charAt(0) === "/") return Util.fileUrl(name)
     return Quickshell.iconPath(name, true)
   }
 
