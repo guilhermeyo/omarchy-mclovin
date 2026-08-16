@@ -204,8 +204,9 @@ Panel {
         wrapMode: Text.WordWrap
       }
 
-      // Numbered because the number is the semantics: first match wins, so
-      // position is not decoration. Arrows change it without opening anything.
+      // No numbering and no arrows: the narrowest rule wins, so position is a
+      // consequence of what the rules say rather than something to manage. The
+      // list is shown narrowest-first because that is the order they are tried.
       Repeater {
         model: root.rules
 
@@ -227,14 +228,16 @@ Panel {
             anchors.leftMargin: Style.space(8); anchors.rightMargin: Style.space(8)
             spacing: Style.space(8)
 
+            // The matcher kind in its own column, so the terms line up and the
+            // rows read as a table of "how" and "what".
             Text {
-              text: String(ruleSurface.index + 1)
+              text: Router.whenLabel(ruleSurface.modelData.when)
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
-              Layout.alignment: Qt.AlignVCenter
-              Layout.preferredWidth: Style.space(14)
-              horizontalAlignment: Text.AlignRight
+              Layout.alignment: Qt.AlignTop
+              Layout.topMargin: Style.space(1)
+              Layout.preferredWidth: Style.space(72)
             }
 
             Column {
@@ -243,7 +246,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: Router.ruleSummary(ruleSurface.modelData)
+                text: Router.ruleLabel(ruleSurface.modelData)
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -260,26 +263,6 @@ Panel {
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
               }
-            }
-
-            PanelActionButton {
-              visible: ruleSurface.index > 0
-              iconText: "󰅃"
-              tooltipText: "Move earlier"
-              foreground: root.dim
-              hoverColor: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: if (root.service) root.service.moveRule(ruleSurface.index, -1)
-            }
-
-            PanelActionButton {
-              visible: ruleSurface.index < root.rules.length - 1
-              iconText: "󰅀"
-              tooltipText: "Move later"
-              foreground: root.dim
-              hoverColor: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: if (root.service) root.service.moveRule(ruleSurface.index, 1)
             }
 
             PanelActionButton {

@@ -212,9 +212,80 @@ function winningRuleIndex(rules, url) {
   return -1
 }
 
-// First match wins, so rules are ordered most-specific-first by the caller.
-// Returns the rule itself (not just the browser) because the bar widget shows
-// which rule fired.
+// ---------------------------------------------------------- specificity
+//
+// When two rules catch the same link, the narrower one wins. There is no
+// user-managed order to get wrong.
+//
+// The measure is how much of the URL a rule pins down, which is essentially the
+// length of the text it constrains. Ranking by matcher kind instead would be
+// wrong in the common case: `Host is github.com` constrains ten characters,
+// while `Contains github.com/acme` constrains twenty-four and is
+// obviously the narrower rule.
+//
+//   host        length of the host, +1 because it is an exact match rather
+//               than a substring that happens to be the same length
+//   startsWith  length of the prefix, +1 for being anchored
+//   contains    length of the text
+//   regex       length of its literal characters only — metacharacters
+//               describe what the pattern accepts, not what it pins down
+//
+// Ties keep the order the rules were written in.
+
+function regexLiteralLength(pattern) {
+  var p = String(pattern || "")
+  var count = 0
+  for (var i = 0; i < p.length; i++) {
+    var c = p.charAt(i)
+    if (c === "\\") { i++; continue }
+    if ("^$.|?*+()[]{}".indexOf(c) !== -1) continue
+    count++
+  }
+  return count
+}
+
+function termSpecificity(when, term) {
+  var t = String(term || "")
+  switch (when) {
+    case WHEN_HOST: return bareHost(t).length + 1
+    case WHEN_STARTS_WITH: return t.length + 1
+    case WHEN_REGEX: return regexLiteralLength(t)
+    default: return t.length
+  }
+}
+
+// A rule is as specific as its loosest term: any one of them can match, so the
+// widest one is what the rule actually promises to catch.
+function ruleSpecificity(rule) {
+  var terms = termList(rule && rule.terms)
+  if (terms.length === 0) return 0
+  var lowest = -1
+  for (var i = 0; i < terms.length; i++) {
+    var score = termSpecificity(rule.when, terms[i])
+    if (lowest === -1 || score < lowest) lowest = score
+  }
+  return lowest
+}
+
+// Narrowest first. The explicit index tiebreak keeps this deterministic without
+// relying on the engine's sort being stable.
+function sortBySpecificity(rules) {
+  var decorated = []
+  for (var i = 0; i < rules.length; i++) {
+    decorated.push({ rule: rules[i], score: ruleSpecificity(rules[i]), index: i })
+  }
+  decorated.sort(function(a, b) {
+    if (b.score !== a.score) return b.score - a.score
+    return a.index - b.index
+  })
+  var out = []
+  for (var j = 0; j < decorated.length; j++) out.push(decorated[j].rule)
+  return out
+}
+
+// The list is kept sorted on both read and write, so walking it in order and
+// taking the first match *is* "most specific wins", and the file on disk reads
+// in the same order the panel shows.
 function firstMatch(rules, parsed) {
   if (!Array.isArray(rules)) return null
   for (var i = 0; i < rules.length; i++) {
@@ -236,6 +307,8 @@ function normalizeConfig(raw) {
     var r = normalizeRule(rules[i])
     if (r) clean.push(r)
   }
+
+  clean = sortBySpecificity(clean)
 
   return {
     version: CONFIG_VERSION,
@@ -328,13 +401,16 @@ function ruleKey(rule) {
   return String(rule.when) + "::" + termList(rule.terms).join(" ").toLowerCase()
 }
 
+// Editing in place, then letting normalizeConfig re-sort: a rule that becomes
+// narrower moves up on its own, which is the whole point of dropping manual
+// ordering.
 function setRuleAt(config, index, rule) {
   var next = normalizeConfig(config)
   var candidate = normalizeRule(rule)
   if (!candidate) return next
   if (index < 0 || index >= next.rules.length) return replaceOrAppend(next, candidate)
   next.rules[index] = candidate
-  return next
+  return normalizeConfig(next)
 }
 
 function appendRule(config, rule) {
@@ -348,19 +424,6 @@ function removeRuleAt(config, index) {
   var next = normalizeConfig(config)
   if (index < 0 || index >= next.rules.length) return next
   next.rules.splice(index, 1)
-  return next
-}
-
-// Order is the whole semantics of the rule list, so moving a rule is a
-// first-class edit rather than something you do by hand in the file.
-function moveRule(config, index, delta) {
-  var next = normalizeConfig(config)
-  var target = index + delta
-  if (index < 0 || index >= next.rules.length) return next
-  if (target < 0 || target >= next.rules.length) return next
-  var moved = next.rules[index]
-  next.rules[index] = next.rules[target]
-  next.rules[target] = moved
   return next
 }
 

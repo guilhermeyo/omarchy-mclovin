@@ -178,8 +178,8 @@ Item {
 
   readonly property string example: draftRule ? Router.exampleUrl(draftRule) : ""
 
-  // The rule list as it would be after saving, so the conflict check reflects
-  // the real outcome rather than the current file.
+  // The rule list as it would be after saving — including the re-sort, since
+  // editing a rule changes how narrow it is and therefore where it lands.
   readonly property var projectedRules: {
     revision
     var out = []
@@ -187,10 +187,18 @@ Item {
     if (!draftRule) return out
     if (root.creating) out.push(draftRule)
     else if (root.ruleIndex < out.length) out[root.ruleIndex] = draftRule
-    return out
+    return Router.sortBySpecificity(out)
   }
 
-  readonly property int ownIndex: root.creating ? projectedRules.length - 1 : root.ruleIndex
+  // Found by identity rather than arithmetic: the sort moved it.
+  readonly property int ownIndex: {
+    revision
+    if (!draftRule) return -1
+    for (var i = 0; i < projectedRules.length; i++) {
+      if (projectedRules[i] === draftRule) return i
+    }
+    return -1
+  }
 
   // Which URL the conflict check runs against: whatever is in the test box,
   // falling back to the synthesised example.
@@ -202,16 +210,16 @@ Item {
     return Router.winningRuleIndex(projectedRules, checkUrl)
   }
 
-  // Only a real conflict: this rule would catch the link, but a rule above it
-  // gets there first. A link this rule simply does not match is not a warning,
-  // it is the test box doing its job.
+  // Only a real conflict: this rule would catch the link, but another rule is
+  // narrower and takes it. A link this rule simply does not match is not a
+  // warning, it is the test box doing its job.
   readonly property bool checkMatches: {
     revision
     if (!draftRule || !checkUrl) return false
     return Router.ruleMatches(draftRule, Router.parseUrl(checkUrl))
   }
 
-  readonly property bool shadowed: checkMatches && winnerIndex !== -1 && winnerIndex < ownIndex
+  readonly property bool shadowed: checkMatches && winnerIndex !== -1 && winnerIndex !== ownIndex
 
   readonly property bool testMatches: {
     revision
@@ -224,13 +232,6 @@ Item {
     if (!root.valid || !root.service) return
     root.service.saveRule(root.ruleIndex, root.draftRule)
     root.saved()
-  }
-
-  function move(delta) {
-    if (root.creating || !root.service) return
-    root.service.moveRule(root.ruleIndex, delta)
-    root.ruleIndex = Math.max(0, Math.min(root.rules.length - 1, root.ruleIndex + delta))
-    root.revision++
   }
 
   Keys.priority: Keys.AfterItem
@@ -283,31 +284,11 @@ Item {
         }
 
         Text {
-          text: root.creating
-            ? "Added last — earlier rules are checked first"
-            : "Rule " + (root.ruleIndex + 1) + " of " + root.rules.length + " — earlier rules win"
+          text: "When two rules catch the same link, the narrower one wins"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
         }
-      }
-
-      PanelActionButton {
-        visible: !root.creating && root.ruleIndex > 0
-        iconText: "󰅃"
-        tooltipText: "Move earlier"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        onClicked: root.move(-1)
-      }
-
-      PanelActionButton {
-        visible: !root.creating && root.ruleIndex < root.rules.length - 1
-        iconText: "󰅀"
-        tooltipText: "Move later"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        onClicked: root.move(1)
       }
     }
 
@@ -600,9 +581,9 @@ Item {
             text: {
               var winner = root.projectedRules[root.winnerIndex]
               if (!winner) return ""
-              return "Rule " + (root.winnerIndex + 1) + " (" + Router.ruleSummary(winner)
-                + ") catches this link first, so this rule would never run for it."
-                + (root.creating ? " Save it, then move it up." : " Move this rule up.")
+              return "“" + Router.ruleSummary(winner) + "” is narrower and takes this link"
+                + " — it opens in " + (root.service ? root.service.targetName(winner) : Router.ruleTargetLabel(winner))
+                + ". Narrow this rule further if you want it to win instead."
             }
             color: root.foreground
             font.family: root.fontFamily

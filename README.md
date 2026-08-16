@@ -106,11 +106,34 @@ with `{url}` in it.
   *"Rule 1 (Contains github.com/acme) catches this link first, so this
   rule would never run for it. Move this rule up."*
 
-**Order is the semantics.** First match wins, so rules are numbered in the
-drop-down and every row has ↑ ↓ next to its ×. The form header says where the
-rule sits (`Rule 2 of 5 — earlier rules win`) and carries the same arrows.
-
 `Ctrl+Enter` saves, `Esc` cancels. You never see the config file.
+
+## When two rules catch the same link
+
+The narrower one wins. There is no order to manage.
+
+"Narrower" is measured as how much of the link a rule pins down — essentially
+the length of the text it constrains, with a point of credit for being anchored:
+
+| Matcher | Counts as |
+|---|---|
+| `Host is` | length of the host, +1 for being exact rather than a substring |
+| `Starts with` | length of the prefix, +1 for being anchored |
+| `Contains` | length of the text |
+| `Regex` | its literal characters only — metacharacters describe what a pattern *accepts*, not what it pins down |
+
+So `Contains github.com/acme` (24) beats `Contains github.com` (10)
+without anyone dragging anything, which is the case that actually comes up.
+
+Ranking by matcher kind instead would get that backwards: `Host is github.com`
+constrains ten characters, while a `Contains` rule naming an organisation inside
+that host constrains twenty-four and is plainly the more specific rule.
+
+A rule with several terms is only as narrow as its widest one, since any of them
+can match. Exact ties keep the order the rules were written in.
+
+The list is shown and stored narrowest-first, which is the order they are tried,
+so the panel and the file always read the same way.
 
 **Opening a browser with no link.** Right-click the bar icon, or use the
 drop-down's **Open the picker**. Same window, no URL, picks just launch the
@@ -138,7 +161,7 @@ editing it by hand still works — the plugin watches it and reloads.
 }
 ```
 
-Matchers, first rule that fits wins:
+Matchers, narrowest rule wins:
 
 - `when` — `startsWith`, `contains`, `host`, or `regex`.
 - `terms` — one or more; any of them matching is enough.

@@ -338,8 +338,6 @@ Item {
                         : Router.setRuleAt(root.config, index, rule))
   }
 
-  function moveRule(index, delta) { setConfig(Router.moveRule(root.config, index, delta)) }
-
   // Summoning our own plugin id reaches the overlay, which switches screens on
   // the payload's `mode`.
   function openEditor(index, url) {
