@@ -207,6 +207,9 @@ sleep 1
 
 HOME="$demo_home" omarchy-shell "$plugin_id" open "https://github.com/acme/app/issues/1842" >/dev/null
 sleep 2
+# Tick Always so the shot shows the chips awake rather than ghosted. The
+# overlay holds exclusive keyboard focus, so this lands where it should.
+command -v wtype >/dev/null 2>&1 && { wtype -M ctrl r -m ctrl; sleep 1; }
 shot picker.png
 HOME="$demo_home" omarchy-shell shell hide "$plugin_id" >/dev/null
 sleep 1

@@ -78,8 +78,14 @@ two boxes, and the second one is a whole rule on one line:
 
 ```
 ☐  Private — just this once
-☐  Always  Brave · Default · site  [ github.com ]  ⟨Site⟩ ⟨Path⟩ ⟨Contains⟩
+☑  Always  Brave · Default · site  [ github.com ]   Site   Path   Contains
+                                                    ‾‾‾‾
 ```
+
+The three shapes are a detail of the Always line, not a second row of buttons:
+caption-sized, equal width, no box, and ghosted until Always is ticked. The
+active one is marked with a hairline, not a fill. Clicking a ghosted one ticks
+Always with that shape already chosen.
 
 The link you clicked was `https://github.com/acme/app/issues/1842`, but the rule
 is never the URL you happened to open. It is the term in the field, matched the

@@ -410,9 +410,16 @@ Item {
         onActiveFocusChanged: if (activeFocus && root.url) root.remember = true
       }
 
-      Chip { label: "Site";     when: Router.WHEN_HOST }
-      Chip { label: "Path";     when: Router.WHEN_STARTS_WITH }
-      Chip { label: "Contains"; when: Router.WHEN_CONTAINS }
+      // Tighter than the row's own spacing so the three read as one strip
+      // hanging off the field, not as three more controls in the line.
+      RowLayout {
+        Layout.alignment: Qt.AlignVCenter
+        spacing: Style.space(2)
+
+        Chip { label: "Site";     when: Router.WHEN_HOST }
+        Chip { label: "Path";     when: Router.WHEN_STARTS_WITH }
+        Chip { label: "Contains"; when: Router.WHEN_CONTAINS }
+      }
     }
 
     Text {
@@ -460,36 +467,58 @@ Item {
     }
   }
 
-  // Tiny segmented control for how the remembered rule matches.
-  component Chip: Rectangle {
+  // All three the same width, measured off the longest label, so they read as
+  // one quiet strip rather than three buttons of assorted sizes.
+  TextMetrics {
+    id: chipMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    text: "Contains"
+  }
+
+  // How the remembered rule matches. Deliberately not a button: no box, no
+  // fill, caption-sized dim text with a hairline under the active one. Private
+  // and Always are the actions on these two lines; this is a detail of one of
+  // them, and it only earns presence once Always is on.
+  component Chip: Item {
     id: chip
     property string label: ""
     property string when: ""
     readonly property bool active: root.rememberWhen === when
 
     Layout.alignment: Qt.AlignVCenter
-    implicitWidth: chipText.implicitWidth + Style.space(12)
-    implicitHeight: Math.max(Style.space(20), chipText.implicitHeight + Style.space(6))
-    radius: Math.max(2, Style.cornerRadius)
-    color: chip.active ? root.selectedBackground : "transparent"
-    border.width: 1
-    border.color: chip.active
-      ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
-      : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
+    Layout.preferredWidth: chipMetrics.width + Style.space(6)
+    implicitHeight: chipText.implicitHeight + Style.space(5)
+
+    opacity: root.remember ? 1 : 0.25
+    Behavior on opacity { NumberAnimation { duration: 110 } }
 
     Text {
       id: chipText
-      anchors.centerIn: parent
+      anchors.top: parent.top
+      anchors.horizontalCenter: parent.horizontalCenter
       text: chip.label
-      color: chip.active ? root.selectedText : root.dim
+      color: chip.active ? root.foreground : root.faint
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
+    }
+
+    Rectangle {
+      anchors.top: chipText.bottom
+      anchors.topMargin: Style.space(2)
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: chipText.implicitWidth
+      height: 1
+      visible: chip.active
+      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.55)
     }
 
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
+      // Clicking a ghosted chip is how you arm Always with that shape already
+      // chosen, which is one gesture instead of two.
       onClicked: {
         root.setRememberWhen(chip.when)
         root.remember = true
