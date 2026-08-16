@@ -131,9 +131,20 @@ Item {
           var rule = remember
             ? { when: picker.rememberWhen, term: picker.rememberTerm }
             : null
-          if (root.service)
-            root.service.choose(browserId, picker.url, profile, wantPrivate, rule)
-          root.dismiss()
+
+          // Only dismiss on success. Closing on a failed launch is the same
+          // gesture as closing on a successful one, which turns "the link went
+          // nowhere" into a mystery instead of a message.
+          var ok = root.service
+            ? root.service.choose(browserId, picker.url, profile, wantPrivate, rule)
+            : false
+          if (ok) {
+            root.dismiss()
+          } else {
+            picker.errorText = (root.service && root.service.lastError)
+              ? root.service.lastError
+              : "Could not open that browser"
+          }
         }
       }
 

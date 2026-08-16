@@ -29,6 +29,11 @@ Item {
   // The last command line handed to a browser, for `status` to report.
   property var lastLaunch: null
 
+  // Why the last launch did not happen. A pick that fails has to be able to say
+  // so: dismissing the picker either way makes a broken launch look exactly
+  // like a successful one, which is the worst thing this plugin can do.
+  property string lastError: ""
+
   readonly property string pluginId: (manifest && manifest.id) || "io.github.guilhermeyo.mclovin"
   readonly property string home: Quickshell.env("HOME")
   readonly property string configDir: home + "/.config/omarchy-mclovin"
@@ -299,23 +304,33 @@ Item {
 
   // A target is a rule-shaped object: {command}, or {browser, profile, private}.
   function launch(target, url) {
+    root.lastError = ""
     if (!target) return false
 
     if (target.command) {
       var cmdArgv = Browsers.expandCommand(target.command, url)
-      if (!cmdArgv.length) return false
+      if (!cmdArgv.length) {
+        root.lastError = "The command “" + target.command + "” is empty"
+        return false
+      }
       Quickshell.execDetached(cmdArgv)
       return true
     }
 
     var entry = browserById(target.browser)
-    if (!entry) return false
+    if (!entry) {
+      root.lastError = "No installed browser matches “" + target.browser + "”"
+      return false
+    }
 
     var dir = target.profile
       ? Browsers.resolveProfileDirectory(profilesFor(entry.id), target.profile)
       : ""
     var argv = Browsers.launchArgs(entry.id, entry.execString, url, dir, target.private === true)
-    if (!argv.length) return false
+    if (!argv.length) {
+      root.lastError = entry.name + " has no usable Exec line in its desktop entry"
+      return false
+    }
 
     // Kept as state rather than a log line: when a link lands in the wrong
     // browser the only question that matters is what was actually run, and
@@ -556,6 +571,7 @@ Item {
         today: root.stats.count,
         importable: root.importableCount,
         lastLaunch: root.lastLaunch,
+        lastError: root.lastError,
         profiles: (function() {
           var out = {}
           for (var k in root.profilesByBrowser) out[k] = root.profilesByBrowser[k].length

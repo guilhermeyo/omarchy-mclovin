@@ -32,6 +32,10 @@ Item {
   property string rememberWhen: Router.WHEN_HOST
   property string rememberTerm: ""
 
+  // Set by the overlay when a pick fails to launch. Shown in place of the key
+  // hints, because at that moment the hints are not what you need to read.
+  property string errorText: ""
+
   signal chosen(string browserId, string profile, bool remember, bool wantPrivate)
   signal cancelled()
 
@@ -107,6 +111,7 @@ Item {
     root.wantPrivate = false
     root.rememberWhen = Router.WHEN_HOST
     root.rememberTerm = root.host
+    root.errorText = ""
   }
 
   function takeFocus() { keyCatcher.forceActiveFocus() }
@@ -433,13 +438,16 @@ Item {
 
     Text {
       Layout.fillWidth: true
-      text: root.url
-        ? "Enter open  ·  Shift+Enter private  ·  Ctrl+R always  ·  Esc cancel"
-        : "Enter open  ·  Esc cancel"
-      color: root.faint
+      text: root.errorText !== ""
+        ? root.errorText
+        : (root.url
+            ? "Enter open  ·  Shift+Enter private  ·  Ctrl+R always  ·  Esc cancel"
+            : "Enter open  ·  Esc cancel")
+      color: root.errorText !== "" ? root.selectedText : root.faint
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       horizontalAlignment: Text.AlignHCenter
+      wrapMode: Text.WordWrap
     }
   }
 
