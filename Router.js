@@ -303,6 +303,73 @@ function isChromiumFamily(browserId) {
     || id.indexOf("edge") !== -1 || id.indexOf("vivaldi") !== -1
 }
 
+function isFirefoxFamily(browserId) {
+  var id = String(browserId || "").toLowerCase()
+  return id.indexOf("firefox") !== -1 || id.indexOf("librewolf") !== -1
+    || id.indexOf("floorp") !== -1 || id.indexOf("waterfox") !== -1
+}
+
+// Gecko browsers keep profiles in an INI, and `-P` takes the display name
+// directly, so name and "directory" are the same string here. Paths are
+// relative to $HOME; every candidate is watched and the first with profiles
+// wins, because which one exists depends on how the browser was packaged.
+function firefoxBaseDirs(browserId) {
+  var id = String(browserId || "").toLowerCase()
+  if (id.indexOf("librewolf") !== -1) return [".librewolf"]
+  if (id.indexOf("floorp") !== -1) return [".floorp"]
+  if (id.indexOf("waterfox") !== -1) return [".waterfox"]
+  return [
+    ".mozilla/firefox",
+    ".config/mozilla/firefox",
+    "snap/firefox/common/.mozilla/firefox",
+    ".var/app/org.mozilla.firefox/.mozilla/firefox"
+  ]
+}
+
+function firefoxProfilesPaths(browserId) {
+  var bases = firefoxBaseDirs(browserId)
+  var out = []
+  for (var i = 0; i < bases.length; i++) out.push(bases[i] + "/profiles.ini")
+  return out
+}
+
+// Firefox creates these itself on first run; they are not profiles anyone
+// chose, and offering them as picker rows is noise.
+var FIREFOX_AUTO_PROFILES = ["default", "default-release"]
+
+function parseFirefoxProfiles(raw) {
+  var lines = String(raw || "").split("\n")
+  var out = []
+  var seen = {}
+  var inProfile = false
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim()
+    if (!line || line.charAt(0) === ";" || line.charAt(0) === "#") continue
+
+    if (line.charAt(0) === "[") {
+      // [General] and [InstallXXXX] carry defaults and install mappings, not
+      // profiles; only [ProfileN] sections describe one.
+      inProfile = line.toLowerCase().indexOf("[profile") === 0
+      continue
+    }
+    if (!inProfile) continue
+
+    var eq = line.indexOf("=")
+    if (eq === -1) continue
+    if (line.slice(0, eq).trim().toLowerCase() !== "name") continue
+
+    var name = line.slice(eq + 1).trim()
+    if (!name || seen[name]) continue
+    if (FIREFOX_AUTO_PROFILES.indexOf(name) !== -1) continue
+    seen[name] = true
+    out.push({ dir: name, name: name })
+  }
+
+  out.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0) })
+  return out
+}
+
 // info_cache keys are the directory names ("Default", "Profile 3"); each value
 // carries the name the user sees in the browser's profile switcher.
 function parseProfileEntries(raw) {
@@ -339,17 +406,63 @@ function resolveProfileDirectory(entries, displayName) {
   return wanted
 }
 
+// Firefox 143+ keeps user-created profiles in `Profile Groups/<id>.sqlite`
+// rather than profiles.ini, which by then only holds the auto-generated
+// default/default-release. Those profiles have no name `-P` can resolve, so
+// they are launched by absolute path with `--profile` instead.
+//
+// Input is one "<base>\t<relative path>|<name>" line per profile, which is what
+// the sqlite3 shell-out in Service.qml prints. Split on the first separator
+// each time: a profile name may contain anything, a path column will not.
+function parseFirefoxGroups(stdout) {
+  var lines = String(stdout || "").split("\n")
+  var out = []
+  var seen = {}
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (!line) continue
+
+    var tab = line.indexOf("\t")
+    if (tab === -1) continue
+    var base = line.slice(0, tab)
+    var rest = line.slice(tab + 1)
+
+    var bar = rest.indexOf("|")
+    if (bar === -1) continue
+    var rel = rest.slice(0, bar).trim()
+    var name = rest.slice(bar + 1).trim()
+    if (!rel || !name || seen[name]) continue
+
+    seen[name] = true
+    out.push({ dir: base + "/" + rel, name: name })
+  }
+
+  out.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0) })
+  return out
+}
+
 // The flag has to land right after the binary, before any URL: Chromium hands
 // a URL to an already-running process and only honours the profile when the
-// flag precedes it.
+// flag precedes it. Same reasoning applies to Firefox.
 function applyProfile(argv, browserId, profileDirectory) {
   if (!profileDirectory || argv.length === 0) return argv
   var out = argv.slice()
-  var flag = isChromiumFamily(browserId)
-    ? "--profile-directory=" + profileDirectory
-    : "-P"
-  out.splice(1, 0, flag)
-  if (!isChromiumFamily(browserId)) out.splice(2, 0, profileDirectory)
+
+  if (isChromiumFamily(browserId)) {
+    out.splice(1, 0, "--profile-directory=" + profileDirectory)
+    return out
+  }
+
+  // An absolute path came from the SQLite store and is the only handle those
+  // profiles have; a bare name came from profiles.ini and `-P` resolves it.
+  if (profileDirectory.charAt(0) === "/") {
+    out.splice(1, 0, "--profile")
+    out.splice(2, 0, profileDirectory)
+  } else {
+    out.splice(1, 0, "-P")
+    out.splice(2, 0, profileDirectory)
+  }
   return out
 }
 
@@ -386,6 +499,52 @@ function isBrowserEntry(entry, selfDesktopId) {
     if (String(list[i]).trim().toLowerCase() === "webbrowser") return true
   }
   return false
+}
+
+// One picker row per launchable target: a browser with no profiles is one row,
+// a browser with profiles is one row each and no bare row, because launching
+// "Chromium" with no profile when three exist just reopens whichever was last
+// used — a choice the user did not make.
+function pickerEntries(browsers, profilesByBrowser) {
+  var out = []
+  var list = browsers || []
+
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i]
+    var id = String(b.id)
+    var name = String(b.name || id)
+    var profiles = (profilesByBrowser || {})[id] || []
+
+    if (profiles.length === 0) {
+      out.push({ browserId: id, name: name, profile: "", icon: b.icon, entry: b })
+      continue
+    }
+    for (var j = 0; j < profiles.length; j++) {
+      out.push({
+        browserId: id,
+        name: name,
+        profile: String(profiles[j].name),
+        icon: b.icon,
+        entry: b
+      })
+    }
+  }
+  return out
+}
+
+// Filter across the browser name, the profile name, and the desktop id, so
+// typing "invoice" finds the Chromium profile and typing "brave" finds Brave.
+function filterPickerEntries(entries, query) {
+  var q = String(query || "").trim().toLowerCase()
+  if (!q) return entries || []
+  var out = []
+  var list = entries || []
+  for (var i = 0; i < list.length; i++) {
+    var e = list[i]
+    var haystack = (String(e.name) + " " + String(e.profile) + " " + String(e.browserId)).toLowerCase()
+    if (haystack.indexOf(q) !== -1) out.push(e)
+  }
+  return out
 }
 
 function sortBrowsers(entries) {

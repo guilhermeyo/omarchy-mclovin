@@ -36,15 +36,34 @@ still opening, just not through mclovin.
 
 **The picker.** Any link that does not match a rule opens the picker.
 
+It lists one row per **browser profile**, not per browser: three Chromium
+profiles are three rows, and a browser with no profiles is a single row. Picking
+"Chromium" when three profiles exist would just reopen whichever was last used,
+which is not a choice.
+
+```
+ Brave            44
+ Chromium         Work
+ Chromium         Design
+ Firefox          Personal
+ Google Chrome    Design
+```
+
 | Key | Does |
 |-----|------|
-| type | filter the browser list |
+| type | filter across browser name, profile name, and desktop id |
 | `↑` `↓` `Tab` | move |
-| `Enter` | open the link in the highlighted browser |
-| `Ctrl+R` | toggle "always use this browser for <host>" |
+| `Enter` | open the link in the highlighted browser and profile |
+| `Ctrl+R` | toggle "always use <browser · profile> for <host>" |
 | `Esc` | clear the filter, then cancel |
 
-Cancelling drops the link. Nothing opens.
+Typing `sico` finds the Chromium profile named "Design". Cancelling
+drops the link — nothing opens.
+
+Profiles come from the browser itself: Chromium-family from `Local State`,
+Firefox from `Profile Groups/*.sqlite` (Firefox 143+) and `profiles.ini` before
+that. The SQLite read shells out to `sqlite3`; without it installed you lose the
+Firefox profile rows and nothing else.
 
 **Rules.** Ticking the remember box writes a rule keyed on the host, minus any
 `www.`. Rules match as a case-insensitive substring of the whole URL, so a
@@ -86,9 +105,9 @@ Targets, one per rule:
 
 - `browser` — a desktop entry id, with or without the `.desktop` suffix.
 - `profile` — optional, alongside `browser`. Name it the way the browser's
-  profile switcher does ("Work", not "Profile 3"); mclovin reads the mapping out
-  of the browser's own `Local State`. Chromium-family gets
-  `--profile-directory`, Firefox gets `-P`.
+  profile switcher does ("Work", not "Profile 3"); mclovin resolves the mapping
+  itself. Chromium-family gets `--profile-directory`, Firefox gets `--profile`
+  with the profile's path, or `-P` for the older named profiles.
 - `command` — a raw command line with `{url}` where the link goes, for anything
   that is not a plain browser.
 

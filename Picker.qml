@@ -28,8 +28,10 @@ Item {
 
   readonly property var parsed: Router.parseUrl(root.url)
   readonly property string host: Router.displayHost(root.parsed)
-  readonly property var allBrowsers: (service && service.browsers) || []
-  readonly property var browsers: Router.filterBrowsers(root.allBrowsers, root.filterText)
+  // Rows are browser+profile pairs, not browsers: picking "Chromium" when three
+  // profiles exist is not a choice the user can meaningfully make.
+  readonly property var allBrowsers: (service && service.pickerEntries) || []
+  readonly property var browsers: Router.filterPickerEntries(root.allBrowsers, root.filterText)
 
   // Menu surface tokens — shared with the emoji picker and the Omarchy menu.
   readonly property color background: Color.menu.background
@@ -42,7 +44,16 @@ Item {
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.6)
   readonly property string fontFamily: Style.font.menuFamily
   readonly property int cornerRadius: Style.cornerRadius
-  readonly property int rowHeight: Math.max(Style.space(40), Style.font.body + Style.spacing.controlPaddingY * 2)
+  // Sized for the two-line rows so a profile row and a bare browser row keep
+  // the same height and the list does not visually stutter.
+  readonly property int rowHeight: Math.max(
+    Style.space(44),
+    Style.font.body + Style.font.bodySmall + Style.spacing.controlPaddingY * 2)
+
+  readonly property var selectedRow: root.browsers[root.selectedIndex] || null
+  readonly property string selectedLabel: selectedRow
+    ? (selectedRow.profile ? selectedRow.name + " · " + selectedRow.profile : selectedRow.name)
+    : ""
 
   // ------------------------------------------------------------- lifecycle
 
@@ -85,16 +96,17 @@ Item {
   }
 
   function activate(index) {
-    var entry = root.browsers[index]
-    if (!entry || !service) return
-    // Remembering only makes sense when there is a host to key the rule on.
+    var row = root.browsers[index]
+    if (!row || !service) return
+    // Remembering only makes sense when there is a host to key the rule on. The
+    // rule records the profile too, so "always use this" means this profile.
     var pattern = (root.remember && root.host && root.url) ? root.host : ""
-    service.choose(String(entry.id), root.url, pattern)
+    service.choose(String(row.browserId), root.url, pattern, String(row.profile || ""))
     dismiss()
   }
 
-  function iconFor(entry) {
-    var name = String((entry && entry.icon) || "")
+  function iconFor(row) {
+    var name = String((row && row.icon) || "")
     if (!name) return Quickshell.iconPath("application-x-executable", true)
     if (name.charAt(0) === "/") return "file://" + name
     return Quickshell.iconPath(name, true)
@@ -123,7 +135,7 @@ Item {
     BorderSurface {
       id: card
       width: Math.min(Style.space(520), panel.width - Style.gapsOut * 2)
-      height: Math.min(Style.space(460), panel.height - Style.gapsOut * 2)
+      height: Math.min(Style.space(540), panel.height - Style.gapsOut * 2)
       radius: root.cornerRadius
       anchors.centerIn: parent
       color: root.background
@@ -243,13 +255,17 @@ Item {
             spacing: Style.space(2)
 
             delegate: Rectangle {
+              id: row
               required property var modelData
               required property int index
+
+              readonly property bool selected: index === root.selectedIndex
+              readonly property string profile: String(modelData.profile || "")
 
               width: list.width
               height: root.rowHeight
               radius: root.cornerRadius
-              color: index === root.selectedIndex ? root.selectedBackground : "transparent"
+              color: selected ? root.selectedBackground : "transparent"
 
               Row {
                 anchors.fill: parent
@@ -258,24 +274,42 @@ Item {
                 spacing: Style.space(10)
 
                 Image {
-                  source: root.iconFor(parent.parent.modelData)
-                  width: Style.font.icon
-                  height: Style.font.icon
+                  source: root.iconFor(row.modelData)
+                  width: Style.font.iconLarge
+                  height: Style.font.iconLarge
                   anchors.verticalCenter: parent.verticalCenter
                   fillMode: Image.PreserveAspectFit
-                  sourceSize.width: Style.font.icon * 2
-                  sourceSize.height: Style.font.icon * 2
+                  sourceSize.width: Style.font.iconLarge * 2
+                  sourceSize.height: Style.font.iconLarge * 2
                   smooth: true
                 }
 
-                Text {
-                  width: parent.width - Style.font.icon - Style.space(10)
+                // Profile on its own line rather than "Chromium (Profile: X)":
+                // the profile is what distinguishes the rows from each other, so
+                // it needs to be scannable, and these names get long.
+                Column {
+                  width: parent.width - Style.font.iconLarge - Style.space(10)
                   anchors.verticalCenter: parent.verticalCenter
-                  text: String(parent.parent.modelData.name || parent.parent.modelData.id)
-                  color: index === root.selectedIndex ? root.selectedText : root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  elide: Text.ElideRight
+                  spacing: 0
+
+                  Text {
+                    width: parent.width
+                    text: String(row.modelData.name)
+                    color: row.selected ? root.selectedText : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    elide: Text.ElideRight
+                  }
+
+                  Text {
+                    width: parent.width
+                    visible: row.profile !== ""
+                    text: row.profile
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
                 }
               }
 
@@ -325,9 +359,14 @@ Item {
               font.pixelSize: Style.font.icon
             }
 
+            // Naming the highlighted row makes it obvious that the rule follows
+            // the cursor, profile included — not "whatever browser this is".
             Text {
               anchors.verticalCenter: parent.verticalCenter
-              text: "Always use this browser for " + root.host
+              width: rememberRow.width - Style.space(20) - Style.font.icon - Style.space(10)
+              text: root.selectedLabel
+                ? "Always use " + root.selectedLabel + " for " + root.host
+                : "Always use this browser for " + root.host
               color: root.remember ? root.selectedText : root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.body

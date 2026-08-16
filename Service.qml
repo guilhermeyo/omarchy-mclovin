@@ -96,24 +96,52 @@ Item {
   // sees it in the profile switcher rather than as "Profile 3".
   property var profilesByBrowser: ({})
 
-  readonly property var localStateTargets: {
+  // Chromium keeps profiles in ~/.config/<vendor>/Local State as JSON; Gecko
+  // keeps them in ~/.mozilla/<vendor>/profiles.ini. Both are watched so a
+  // profile created mid-session shows up in the picker.
+  readonly property var profileSources: {
     var out = []
     for (var i = 0; i < root.browsers.length; i++) {
       var id = String(root.browsers[i].id)
-      if (!Router.isChromiumFamily(id)) continue
-      var rels = Router.localStateCandidates(id)
-      for (var j = 0; j < rels.length; j++) out.push({ browser: id, path: root.home + "/.config/" + rels[j] })
+      var rels, j
+      if (Router.isChromiumFamily(id)) {
+        rels = Router.localStateCandidates(id)
+        for (j = 0; j < rels.length; j++)
+          out.push({ browser: id, kind: "chromium", path: root.home + "/.config/" + rels[j] })
+      } else if (Router.isFirefoxFamily(id)) {
+        rels = Router.firefoxProfilesPaths(id)
+        for (j = 0; j < rels.length; j++)
+          out.push({ browser: id, kind: "firefox", path: root.home + "/" + rels[j] })
+      }
     }
     return out
   }
 
+  // What the picker lists: one row per browser, or one row per profile when a
+  // browser has them.
+  readonly property var pickerEntries: Router.pickerEntries(root.browsers, root.profilesByBrowser)
+
   // Candidates are tried in order and the first one holding profiles wins, so a
-  // later empty or missing file must not clear what an earlier one found.
-  function setProfiles(browserId, entries) {
+  // later empty or missing file must not clear what an earlier one found. The
+  // exception is `authoritative`, used by the Firefox SQLite reader: it is the
+  // real source on Firefox 143+ and must be allowed to replace whatever the
+  // legacy INI produced.
+  property var authoritativeProfiles: ({})
+
+  function setProfiles(browserId, entries, authoritative) {
     if (!entries || entries.length === 0) return
     var key = String(browserId)
-    var existing = root.profilesByBrowser[key]
-    if (existing && existing.length > 0) return
+    if (!authoritative) {
+      if (root.authoritativeProfiles[key]) return
+      var existing = root.profilesByBrowser[key]
+      if (existing && existing.length > 0) return
+    } else {
+      var flags = ({})
+      for (var f in root.authoritativeProfiles) flags[f] = root.authoritativeProfiles[f]
+      flags[key] = true
+      root.authoritativeProfiles = flags
+    }
+
     var next = ({})
     for (var k in root.profilesByBrowser) next[k] = root.profilesByBrowser[k]
     next[key] = entries
@@ -123,7 +151,7 @@ Item {
   function profilesFor(browserId) { return root.profilesByBrowser[String(browserId)] || [] }
 
   Instantiator {
-    model: root.localStateTargets
+    model: root.profileSources
 
     delegate: QtObject {
       required property var modelData
@@ -132,8 +160,69 @@ Item {
         path: modelData.path
         watchChanges: true
         printErrors: false
-        onLoaded: root.setProfiles(modelData.browser, Router.parseProfileEntries(text()))
+        onLoaded: root.setProfiles(modelData.browser, modelData.kind === "firefox"
+          ? Router.parseFirefoxProfiles(text())
+          : Router.parseProfileEntries(text()))
         onFileChanged: reload()
+      }
+    }
+  }
+
+  // Firefox 143+ moved user-created profiles into a SQLite store, and QML
+  // cannot read SQLite. Shelling out to sqlite3 is the whole dependency, it is
+  // read-only, and it runs at startup and on refresh — not on the hot path. If
+  // sqlite3 is missing the command produces nothing and the INI reader above
+  // stands, which costs the Firefox profile rows and nothing else.
+  readonly property var firefoxBrowsers: {
+    var out = []
+    for (var i = 0; i < root.browsers.length; i++) {
+      var id = String(root.browsers[i].id)
+      if (Router.isFirefoxFamily(id)) out.push(id)
+    }
+    return out
+  }
+
+  function reloadFirefoxProfiles() {
+    for (var i = 0; i < firefoxGroupReaders.count; i++) {
+      var obj = firefoxGroupReaders.objectAt(i)
+      if (obj && obj.reader) obj.reader.running = true
+    }
+  }
+
+  Instantiator {
+    id: firefoxGroupReaders
+    model: root.firefoxBrowsers
+
+    delegate: QtObject {
+      required property var modelData
+
+      readonly property var baseDirs: {
+        var rels = Router.firefoxBaseDirs(modelData)
+        var out = []
+        for (var i = 0; i < rels.length; i++) out.push(root.home + "/" + rels[i])
+        return out
+      }
+
+      property Process reader: Process {
+        running: true
+        command: [
+          "sh", "-c",
+          'command -v sqlite3 >/dev/null 2>&1 || exit 0\n'
+          + 'for base in "$@"; do\n'
+          + '  dir="$base/Profile Groups"\n'
+          + '  [ -d "$dir" ] || continue\n'
+          + '  for db in "$dir"/*.sqlite; do\n'
+          + '    [ -f "$db" ] || continue\n'
+          + '    sqlite3 -readonly -list -separator "|" "$db" "select path, name from Profiles;" 2>/dev/null |\n'
+          + '      while IFS= read -r line; do printf "%s\\t%s\\n" "$base" "$line"; done\n'
+          + '  done\n'
+          + 'done\n',
+          "sh"
+        ].concat(baseDirs)
+
+        stdout: StdioCollector {
+          onStreamFinished: root.setProfiles(modelData, Router.parseFirefoxGroups(text), true)
+        }
       }
     }
   }
@@ -432,6 +521,7 @@ Item {
     function refresh(): string {
       root.refreshBrowsers()
       root.refreshHandler()
+      root.reloadFirefoxProfiles()
       return "ok"
     }
 
