@@ -191,10 +191,14 @@ And two settings:
 
 If you have the [mclovin CLI](https://github.com/guilhermeyo/mclovin) with rules
 in `~/.config/mclovin/rules.toml`, the drop-down offers **Import N rules from
-the mclovin CLI**. It reads the TOML, resolves browser names to desktop entry
-ids, and prepends the rules in file order — both routers are first-match-wins,
-so the order you already tuned carries over. Profiles and `command =` rules come
-across intact.
+the mclovin CLI**. It reads the TOML and resolves browser names to desktop entry
+ids. Profiles and `command =` rules come across intact.
+
+The CLI is first-match-wins and this plugin is narrowest-wins, so the imported
+rules get re-ranked rather than keeping their file positions. For the ordering
+people actually write — the specific rule above the general one — that lands on
+the same answer. A pair where the *wider* rule was deliberately first is the
+exception, and the form's preview will show it opening somewhere new.
 
 It is a one-shot copy, not a live binding. After importing, this plugin owns its
 config and the CLI can go away.
