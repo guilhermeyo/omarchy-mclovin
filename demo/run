@@ -205,7 +205,7 @@ shot panel.png
 HOME="$demo_home" omarchy-shell "$plugin_id" hidePanel >/dev/null
 sleep 1
 
-HOME="$demo_home" omarchy-shell "$plugin_id" open "https://example.com/report" >/dev/null
+HOME="$demo_home" omarchy-shell "$plugin_id" open "https://github.com/acme/app/issues/1842" >/dev/null
 sleep 2
 shot picker.png
 HOME="$demo_home" omarchy-shell shell hide "$plugin_id" >/dev/null

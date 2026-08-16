@@ -273,17 +273,21 @@ Item {
 
   // Called by the picker once the user has chosen. Kept here rather than in the
   // overlay so the launch/record/remember sequence has one implementation.
-  function choose(browserId, url, rememberPattern, profile, wantPrivate) {
+  // `remember` is null, or {when, term} straight off the picker's chips — the
+  // picker decides what the rule should match, this only writes it.
+  function choose(browserId, url, profile, wantPrivate, remember) {
     var target = {
       browser: browserId,
       profile: String(profile || ""),
       private: wantPrivate === true
     }
     if (!launch(target, url)) return false
-    if (rememberPattern) {
-      setConfig(Router.upsertRule(root.config, rememberPattern, browserId,
+
+    var term = remember ? String(remember.term || "").trim() : ""
+    if (term) {
+      setConfig(Router.upsertRule(root.config, remember.when, term, browserId,
                                   target.profile, target.private))
-      record(targetName(target), rememberPattern, url)
+      record(targetName(target), term, url)
     } else {
       record(targetName(target), "", url)
     }

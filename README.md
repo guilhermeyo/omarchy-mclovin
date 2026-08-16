@@ -73,6 +73,31 @@ which is not a choice.
 Typing `sico` finds the Chromium profile named "Design". Cancelling
 drops the link — nothing opens.
 
+**Turning a link into a rule, without leaving the picker.** Under the list sit
+two boxes, and the second one is a whole rule on one line:
+
+```
+☐  Private — just this once
+☐  Always  Brave · Default · site  [ github.com ]  ⟨Site⟩ ⟨Path⟩ ⟨Contains⟩
+```
+
+The link you clicked was `https://github.com/acme/app/issues/1842`, but the rule
+is never the URL you happened to open. It is the term in the field, matched the
+way the chip says:
+
+| Chip | Fills the field with | Matches |
+|---|---|---|
+| **Site** | `github.com` — the host, no `www.` | that site |
+| **Path** | `https://github.com/acme/app` — origin plus the first couple of path segments, stopping at anything that looks like an id | that project |
+| **Contains** | the host, for you to trim down to `github` | anywhere in the link |
+
+The field is editable, so "everything GitHub goes to Brave" is one click and one
+tick. The row reads as the rule that will exist, private included: tick both
+boxes and it says `Always Brave · Default · private · site`.
+
+No regex here — that lives in the form, which the picker deliberately does not
+open. A picker is for choosing quickly.
+
 Profiles come from the browser itself: Chromium-family from `Local State`,
 Firefox from `Profile Groups/*.sqlite` (Firefox 143+) and `profiles.ini` before
 that. The SQLite read shells out to `sqlite3`; without it installed you lose the
@@ -86,18 +111,18 @@ Everything else happens in the rule form, which is the bar widget's drop-down �
 
 Two separate things, deliberately not the same control.
 
-**Just this link.** `Shift+Enter` in the picker, or the *Open in a private
-window, just this once* box above the remember line. Both reset every time the
-picker opens, so a private link cannot leave the toggle armed for the next one.
+**Just this link.** `Shift+Enter` in the picker, or the *Private — just this
+once* box above the remember line. Both reset every time the picker opens, so a
+private link cannot leave the toggle armed for the next one.
 
 **Always, for this site.** A rule can be private: *Open in a private window* in
 the rule form. Every link it catches opens incognito, in that browser and
 profile. The rule list marks it — `Firefox · Personal · private` on the second
 line — so it is visible without opening anything.
 
-Tick both in the picker and the remember line says so out loud: *"Always use
-Firefox · Personal for hedge.example — as a private rule."* Nothing becomes a
-private rule by accident.
+Tick both in the picker and the remember line says so out loud —
+`Always Firefox · Personal · private · site` — so nothing becomes a private rule
+by accident.
 
 The flags are each browser's own, read off the `[Desktop Action
 new-private-window]` group in its installed desktop entry rather than guessed:

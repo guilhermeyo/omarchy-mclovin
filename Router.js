@@ -36,15 +36,47 @@ function parseUrl(raw) {
   var colon = authority.lastIndexOf(":")
   if (colon !== -1 && authority.indexOf("]") === -1) authority = authority.slice(0, colon)
 
+  // Path only, without query or fragment: those identify one page, and no rule
+  // anyone writes by hand is about one page.
+  var afterAuthority = rest.slice(authority.length)
+  var path = afterAuthority
+  for (var j = 0; j < afterAuthority.length; j++) {
+    var pc = afterAuthority.charAt(j)
+    if (pc === "?" || pc === "#") { path = afterAuthority.slice(0, j); break }
+  }
+
   var host = authority.toLowerCase()
   return {
     url: url,
     scheme: scheme,
     host: host,
+    path: path,
     // www. is noise for both display and rule matching — nobody wants one rule
     // for www.github.com and another for github.com.
     domain: host.indexOf("www.") === 0 ? host.slice(4) : host
   }
+}
+
+// What the picker's "Path" chip suggests: the place a link lives rather than
+// the link itself. https://github.com/acme/app/issues/1842 is about a project,
+// so the useful prefix is https://github.com/acme/app — the first couple of
+// segments, stopping at anything that looks like an id.
+function pathPrefix(parsed, maxSegments) {
+  var host = parsed.domain || parsed.host
+  if (!host) return ""
+
+  var max = maxSegments === undefined ? 2 : maxSegments
+  var segments = String(parsed.path || "").split("/")
+  var kept = []
+  for (var i = 0; i < segments.length && kept.length < max; i++) {
+    var segment = segments[i]
+    if (!segment) continue
+    if (/^\d+$/.test(segment)) break
+    kept.push(segment)
+  }
+
+  var base = (parsed.scheme || "https") + "://" + host
+  return kept.length ? base + "/" + kept.join("/") : base + "/"
 }
 
 // What the picker shows and what a remembered rule keys on. Falls back to the
@@ -399,9 +431,10 @@ function makeRule(when, terms, browser, profile, command, wantPrivate) {
 // Replacing an existing rule for the same matcher rather than appending keeps
 // "remember this" idempotent — picking a different browser for a host you
 // already have a rule for updates it instead of adding a shadowed duplicate.
-function upsertRule(config, match, browser, profile, wantPrivate) {
+function upsertRule(config, when, term, browser, profile, wantPrivate) {
   var next = normalizeConfig(config)
-  var candidate = makeRule(WHEN_HOST, [match], browser, profile, "", wantPrivate)
+  var candidate = makeRule(isWhen(when) ? when : WHEN_HOST, [term],
+                           browser, profile, "", wantPrivate)
   if (!candidate) return next
   return replaceOrAppend(next, candidate)
 }

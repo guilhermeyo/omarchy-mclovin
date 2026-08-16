@@ -21,14 +21,6 @@
       "profile": "Work"
     },
     {
-      "when": "host",
-      "terms": [
-        "github.com"
-      ],
-      "browser": "firefox",
-      "profile": "Personal"
-    },
-    {
       "when": "contains",
       "terms": [
         "invoice"

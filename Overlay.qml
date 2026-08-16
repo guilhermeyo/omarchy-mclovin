@@ -62,15 +62,6 @@ Item {
       root.shell.hide((root.manifest && root.manifest.id) || "io.github.guilhermeyo.mclovin")
   }
 
-  // The picker hands off to the form when someone wants a rule for the link
-  // they are looking at, instead of making them find the bar widget.
-  function editRuleFor(index, forUrl) {
-    root.mode = "editor"
-    root.ruleIndex = index
-    form.load(index, forUrl)
-    Qt.callLater(function() { form.takeFocus() })
-  }
-
   PanelWindow {
     id: panel
     visible: root.opened
@@ -93,27 +84,25 @@ Item {
 
     BorderSurface {
       id: card
-      // The form is wider than the picker: it carries a matcher row, a
-      // destination row, and preview prose, and the extra width is what keeps
-      // the prose from wrapping into a third line and the card from growing
-      // taller to compensate.
-      width: Math.min(Style.space(root.editing ? 680 : 520), panel.width - Style.gapsOut * 2)
+      // The form carries preview prose that should not wrap to a third line;
+      // the picker carries a remember row with a term field and three chips.
+      // Both need more than a plain list would.
+      width: Math.min(Style.space(root.editing ? 680 : 620), panel.width - Style.gapsOut * 2)
 
-      // The picker is a list and wants a fixed, generous height. The form is a
-      // document: exactly as tall as its content, insets included, so nothing
-      // has to scroll on a screen with the room for it.
+      // Both screens are documents: exactly as tall as their content, insets
+      // included, so nothing scrolls where there is room and — for the picker —
+      // there is never a gap between the last browser and the first checkbox.
       //
       // The clamp against panel.height is what makes the small monitor work:
-      // 1280x720 logical leaves 710, and if the form wants more than that it
-      // gives the difference back to its scroller rather than growing off
-      // screen. The floor keeps a half-filled form from looking collapsed.
-      readonly property real formHeight: Math.max(
-        Style.space(360),
-        form.implicitHeight + card.contentTopInset + card.contentBottomInset)
+      // 1280x720 logical leaves 710, and anything wanting more gives the
+      // difference back to its scroller rather than growing off screen. The
+      // floor keeps a half-filled surface from looking collapsed.
+      readonly property real contentHeight: Math.max(
+        Style.space(320),
+        (root.editing ? form.implicitHeight : picker.implicitHeight)
+          + card.contentTopInset + card.contentBottomInset)
 
-      height: Math.min(
-        root.editing ? formHeight : Style.space(540),
-        panel.height - Style.gapsOut * 2)
+      height: Math.min(contentHeight, panel.height - Style.gapsOut * 2)
       radius: Style.cornerRadius
       anchors.centerIn: parent
       color: root.background
@@ -138,12 +127,14 @@ Item {
         service: root.service
         onCancelled: root.dismiss()
         onChosen: function(browserId, profile, remember, wantPrivate) {
-          var pattern = remember ? Router.displayHost(Router.parseUrl(picker.url)) : ""
+          // The picker owns what the rule matches; this only hands it over.
+          var rule = remember
+            ? { when: picker.rememberWhen, term: picker.rememberTerm }
+            : null
           if (root.service)
-            root.service.choose(browserId, picker.url, pattern, profile, wantPrivate)
+            root.service.choose(browserId, picker.url, profile, wantPrivate, rule)
           root.dismiss()
         }
-        onRuleRequested: root.editRuleFor(-1, picker.url)
       }
 
       RuleFormView {

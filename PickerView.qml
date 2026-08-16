@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -7,6 +8,10 @@ import "Browsers.js" as Browsers
 
 // The browser picker screen. Type to filter, arrows to move, Enter to open.
 // Rows are browser+profile pairs — see Browsers.pickerEntries for why.
+//
+// Everything below the list is one block: private, then remember, then the key
+// hints. The card sizes itself to that block plus the list, so there is never a
+// gap between the last browser and the first choice you make about it.
 Item {
   id: root
 
@@ -21,9 +26,14 @@ Item {
   // allowed and says so in the remember line, but neither implies the other.
   property bool wantPrivate: false
 
+  // Which shape the remembered rule takes, and the text it matches on. The
+  // term is editable: the whole point is that a link to one pull request can
+  // become a rule about the whole of GitHub without opening the form.
+  property string rememberWhen: Router.WHEN_HOST
+  property string rememberTerm: ""
+
   signal chosen(string browserId, string profile, bool remember, bool wantPrivate)
   signal cancelled()
-  signal ruleRequested()
 
   readonly property var parsed: Router.parseUrl(root.url)
   readonly property string host: Router.displayHost(root.parsed)
@@ -34,6 +44,7 @@ Item {
   readonly property color selectedBackground: Color.menu.selectedBackground
   readonly property color selectedText: Color.menu.selectedText
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.6)
+  readonly property color faint: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.34)
   readonly property string fontFamily: Style.font.menuFamily
   readonly property int rowHeight: Math.max(
     Style.space(44),
@@ -51,6 +62,41 @@ Item {
     ? service.supportsPrivate(String(selectedRow.browserId))
     : false
 
+  // The card hugs this, so a short browser list gives a short card.
+  implicitHeight: pickerLayout.implicitHeight
+
+  // -------------------------------------------------------------- remember
+
+  // What each chip suggests. Site is the default because it is the answer nine
+  // times out of ten; Path narrows to one project; Contains is the one you
+  // trim by hand, so it starts from the host and gets shortened.
+  function suggestionFor(when) {
+    switch (when) {
+      case Router.WHEN_STARTS_WITH: return Router.pathPrefix(root.parsed)
+      default: return root.host
+    }
+  }
+
+  function setRememberWhen(when) {
+    root.rememberWhen = when
+    root.rememberTerm = suggestionFor(when)
+  }
+
+  function whenWord(when) {
+    switch (when) {
+      case Router.WHEN_STARTS_WITH: return "path"
+      case Router.WHEN_CONTAINS: return "contains"
+      default: return "site"
+    }
+  }
+
+  // The sentence on the remember line: exactly the rule that will exist.
+  readonly property string rememberSummary: {
+    var where = root.selectedLabel || "this browser"
+    if (root.wantPrivate && root.canGoPrivate) where += " · private"
+    return where + " · " + whenWord(root.rememberWhen)
+  }
+
   function reset(nextUrl) {
     root.url = String(nextUrl || "")
     root.filterText = ""
@@ -59,6 +105,8 @@ Item {
     // quietly stop writing one, on the next unrelated link.
     root.remember = false
     root.wantPrivate = false
+    root.rememberWhen = Router.WHEN_HOST
+    root.rememberTerm = root.host
   }
 
   function takeFocus() { keyCatcher.forceActiveFocus() }
@@ -81,7 +129,7 @@ Item {
     var goPrivate = (forcePrivate === true || root.wantPrivate)
       && (service ? service.supportsPrivate(String(row.browserId)) : false)
     root.chosen(String(row.browserId), String(row.profile || ""),
-                root.remember && root.host !== "" && root.url !== "",
+                root.remember && String(root.rememberTerm).trim() !== "",
                 goPrivate)
   }
 
@@ -109,8 +157,8 @@ Item {
       } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)) {
         if (root.url) root.remember = !root.remember
         event.accepted = true
-      } else if (event.key === Qt.Key_N && (event.modifiers & Qt.ControlModifier)) {
-        root.ruleRequested()
+      } else if (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier)) {
+        if (root.canGoPrivate) root.wantPrivate = !root.wantPrivate
         event.accepted = true
       } else if (event.key === Qt.Key_Down || (event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier))) {
         root.move(1)
@@ -124,9 +172,6 @@ Item {
         // fast path cannot leave state behind for the next link.
         root.activate(root.selectedIndex, (event.modifiers & Qt.ShiftModifier) !== 0)
         event.accepted = true
-      } else if (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier)) {
-        if (root.canGoPrivate) root.wantPrivate = !root.wantPrivate
-        event.accepted = true
       } else if (Util.editsFilter(event, root.filterText)) {
         root.setFilter(Util.editedFilter(event, root.filterText))
         event.accepted = true
@@ -138,28 +183,28 @@ Item {
     }
   }
 
-  Column {
+  ColumnLayout {
+    id: pickerLayout
     anchors.fill: parent
     spacing: Style.spacing.md
 
-    Row {
-      id: header
-      width: parent.width
+    // ---------------------------------------------------------------- header
+    RowLayout {
+      Layout.fillWidth: true
       spacing: Style.spacing.md
 
       McLovinIcon {
         iconSize: Style.font.displayLarge
         color: root.foreground
-        anchors.verticalCenter: parent.verticalCenter
+        Layout.alignment: Qt.AlignVCenter
       }
 
-      Column {
-        width: parent.width - Style.font.displayLarge - Style.spacing.md
-        anchors.verticalCenter: parent.verticalCenter
+      ColumnLayout {
+        Layout.fillWidth: true
         spacing: Style.space(2)
 
         Text {
-          width: parent.width
+          Layout.fillWidth: true
           text: root.host || "Open a browser"
           color: root.foreground
           font.family: root.fontFamily
@@ -169,7 +214,7 @@ Item {
         }
 
         Text {
-          width: parent.width
+          Layout.fillWidth: true
           visible: root.url !== ""
           text: root.url
           color: root.dim
@@ -180,10 +225,10 @@ Item {
       }
     }
 
-    PanelSeparator { foreground: root.foreground }
+    PanelSeparator { Layout.fillWidth: true; foreground: root.foreground }
 
     Text {
-      width: parent.width
+      Layout.fillWidth: true
       text: root.filterText || "Type to filter…"
       color: root.foreground
       opacity: root.filterText ? 1 : 0.5
@@ -192,10 +237,21 @@ Item {
       elide: Text.ElideRight
     }
 
+    // ------------------------------------------------------------------ list
+    //
+    // Asks for exactly the rows it has, so four browsers do not leave a hole
+    // above the checkboxes. Past the cap it scrolls instead of growing.
     Item {
-      width: parent.width
-      height: parent.height - header.height - privateRow.height - rememberRow.height
-              - footer.height - Style.spacing.md * 5 - Style.space(24)
+      Layout.fillWidth: true
+      Layout.fillHeight: true
+      // Capped at whole rows. A cap in pixels slices the last browser in half,
+      // which reads as a rendering fault rather than as "there is more below".
+      readonly property int maxVisibleRows: 6
+      readonly property int rowPitch: root.rowHeight + list.spacing
+      Layout.preferredHeight: Math.min(
+        list.contentHeight,
+        maxVisibleRows * rowPitch - list.spacing)
+      Layout.minimumHeight: Style.space(80)
 
       ListView {
         id: list
@@ -284,111 +340,160 @@ Item {
       }
     }
 
-    // Private first, remember second: this open, then every open after it.
-    Rectangle {
-      id: privateRow
-      width: parent.width
-      height: root.url ? root.rowHeight : 0
+    PanelSeparator {
+      Layout.fillWidth: true
       visible: root.url !== ""
-      radius: Style.cornerRadius
-      color: root.wantPrivate ? root.selectedBackground : "transparent"
+      foreground: root.foreground
+    }
+
+    // --------------------------------------------------------------- private
+    CheckRow {
+      Layout.fillWidth: true
+      visible: root.url !== ""
+      checked: root.wantPrivate
+      enabled: root.canGoPrivate
       opacity: root.canGoPrivate ? 1 : 0.5
+      onToggled: if (root.canGoPrivate) root.wantPrivate = !root.wantPrivate
 
-      Row {
-        anchors.fill: parent
-        anchors.leftMargin: Style.space(10)
-        anchors.rightMargin: Style.space(10)
-        spacing: Style.space(10)
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.wantPrivate ? "󰄲" : "󰄱"
-          color: root.wantPrivate ? root.selectedText : root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.icon
-        }
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          width: privateRow.width - Style.space(20) - Style.font.icon - Style.space(10)
-          text: root.canGoPrivate
-            ? "Open in a private window, just this once"
-            : (root.selectedRow ? root.selectedRow.name + " has no private mode" : "No private mode")
-          color: root.wantPrivate ? root.selectedText : root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-        }
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        enabled: root.canGoPrivate
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.wantPrivate = !root.wantPrivate
+      Text {
+        Layout.fillWidth: true
+        text: root.canGoPrivate
+          ? "Private — just this once"
+          : (root.selectedRow ? root.selectedRow.name + " has no private mode" : "No private mode")
+        color: root.wantPrivate ? root.selectedText : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        elide: Text.ElideRight
       }
     }
 
-    Rectangle {
-      id: rememberRow
-      width: parent.width
-      height: root.url ? root.rowHeight : 0
+    // -------------------------------------------------------------- remember
+    //
+    // The row reads as the rule it will create: Always <browser · profile>
+    // <how> <what>. The term is a field and the how is three chips, so a link
+    // to one pull request becomes a rule about a whole site without leaving
+    // the picker.
+    CheckRow {
+      id: alwaysRow
+      Layout.fillWidth: true
       visible: root.url !== ""
-      radius: Style.cornerRadius
-      color: root.remember ? root.selectedBackground : "transparent"
-      // Stated on the row that writes the rule, because that is the surprising
-      // combination: the private tick above is about this open, but together
-      // they mean every future link to this host opens private too.
-      readonly property string privateSuffix:
-        (root.remember && root.wantPrivate && root.canGoPrivate) ? " — as a private rule" : ""
+      checked: root.remember
+      onToggled: root.remember = !root.remember
 
-      Row {
-        anchors.fill: parent
-        anchors.leftMargin: Style.space(10)
-        anchors.rightMargin: Style.space(10)
-        spacing: Style.space(10)
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.remember ? "󰄲" : "󰄱"
-          color: root.remember ? root.selectedText : root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.icon
-        }
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          width: rememberRow.width - Style.space(20) - Style.font.icon - Style.space(10)
-          text: (root.selectedLabel
-                  ? "Always use " + root.selectedLabel + " for " + root.host
-                  : "Always use this browser for " + root.host)
-                + rememberRow.privateSuffix
-          color: root.remember ? root.selectedText : root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-        }
+      Text {
+        text: "Always"
+        color: root.remember ? root.selectedText : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
       }
 
-      MouseArea {
-        anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.remember = !root.remember
+      Text {
+        text: root.rememberSummary
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        elide: Text.ElideRight
+        // A fixed cap, not a fraction of the row: sizing a child from the width
+        // of the layout that is sizing it is what "recursive rearrange" means.
+        Layout.maximumWidth: Style.space(190)
       }
+
+      TextField {
+        Layout.fillWidth: true
+        Layout.preferredWidth: 0
+        Layout.minimumWidth: Style.space(90)
+        foreground: root.foreground
+        text: root.rememberTerm
+        placeholderText: root.host
+        onTextChanged: root.rememberTerm = text
+        // Typing here is a statement of intent; arm the checkbox with it.
+        onActiveFocusChanged: if (activeFocus && root.url) root.remember = true
+      }
+
+      Chip { label: "Site";     when: Router.WHEN_HOST }
+      Chip { label: "Path";     when: Router.WHEN_STARTS_WITH }
+      Chip { label: "Contains"; when: Router.WHEN_CONTAINS }
     }
 
     Text {
-      id: footer
-      width: parent.width
+      Layout.fillWidth: true
       text: root.url
-        ? "Enter open  ·  Shift+Enter private  ·  Ctrl+R remember  ·  Esc cancel"
+        ? "Enter open  ·  Shift+Enter private  ·  Ctrl+R always  ·  Esc cancel"
         : "Enter open  ·  Esc cancel"
-      color: root.dim
+      color: root.faint
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       horizontalAlignment: Text.AlignHCenter
+    }
+  }
+
+  // A checkbox glyph plus whatever the caller puts beside it, on one line.
+  component CheckRow: RowLayout {
+    id: checkRow
+    property bool checked: false
+    default property alias content: checkContent.data
+    signal toggled()
+
+    spacing: Style.space(8)
+
+    Text {
+      text: checkRow.checked ? "󰄲" : "󰄱"
+      color: checkRow.checked ? root.selectedText : root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.icon
+      Layout.alignment: Qt.AlignVCenter
+
+      MouseArea {
+        anchors.fill: parent
+        anchors.margins: -Style.space(4)
+        enabled: checkRow.enabled
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: checkRow.toggled()
+      }
+    }
+
+    RowLayout {
+      id: checkContent
+      Layout.fillWidth: true
+      spacing: Style.space(8)
+    }
+  }
+
+  // Tiny segmented control for how the remembered rule matches.
+  component Chip: Rectangle {
+    id: chip
+    property string label: ""
+    property string when: ""
+    readonly property bool active: root.rememberWhen === when
+
+    Layout.alignment: Qt.AlignVCenter
+    implicitWidth: chipText.implicitWidth + Style.space(12)
+    implicitHeight: Math.max(Style.space(20), chipText.implicitHeight + Style.space(6))
+    radius: Math.max(2, Style.cornerRadius)
+    color: chip.active ? root.selectedBackground : "transparent"
+    border.width: 1
+    border.color: chip.active
+      ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
+      : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
+
+    Text {
+      id: chipText
+      anchors.centerIn: parent
+      text: chip.label
+      color: chip.active ? root.selectedText : root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: {
+        root.setRememberWhen(chip.when)
+        root.remember = true
+      }
     }
   }
 }
