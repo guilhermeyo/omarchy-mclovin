@@ -93,13 +93,23 @@ Item {
 
     BorderSurface {
       id: card
-      width: Math.min(Style.space(root.editing ? 620 : 520), panel.width - Style.gapsOut * 2)
+      // The form is wider than the picker: it carries a matcher row, a
+      // destination row, and preview prose, and the extra width is what keeps
+      // the prose from wrapping into a third line and the card from growing
+      // taller to compensate.
+      width: Math.min(Style.space(root.editing ? 680 : 520), panel.width - Style.gapsOut * 2)
 
       // The picker is a list and wants a fixed, generous height. The form is a
-      // document: it should be exactly as tall as it needs, up to a cap.
+      // document: exactly as tall as its content, insets included, so nothing
+      // has to scroll on a screen with the room for it.
+      //
+      // The clamp against panel.height is what makes the small monitor work:
+      // 1280x720 logical leaves 710, and if the form wants more than that it
+      // gives the difference back to its scroller rather than growing off
+      // screen. The floor keeps a half-filled form from looking collapsed.
       readonly property real formHeight: Math.max(
-        Style.space(380),
-        Math.min(Style.space(700), form.desiredHeight + card.padding * 2))
+        Style.space(360),
+        form.implicitHeight + card.contentTopInset + card.contentBottomInset)
 
       height: Math.min(
         root.editing ? formHeight : Style.space(540),

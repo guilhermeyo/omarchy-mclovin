@@ -194,8 +194,10 @@ fi
 mkdir -p "$outdir"
 shot() { grim -o "$monitor_name" "$outdir/$1"; }
 
-# Park the pointer off the captured output so it cannot land in a shot.
-hyprctl dispatch "hl.dsp.movecursor({ x = 1, y = 2158 })" >/dev/null 2>&1 || true
+# Hyprland's screencopy draws the pointer into the frame and this version has no
+# dispatcher to move it, so the previews are cropped to the card instead. The
+# card is centred, so mirroring its left edge about the middle of the output
+# gives the true width even when the pointer sits beside it.
 
 HOME="$demo_home" omarchy-shell "$plugin_id" togglePanel >/dev/null
 sleep 2

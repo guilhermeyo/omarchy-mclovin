@@ -267,16 +267,22 @@ Item {
 
   // -------------------------------------------------------------------- ui
 
-  // What the card should be, so it hugs the form instead of leaving a lake of
-  // empty space under a short rule. The overlay caps it; past the cap the
-  // Flickable scrolls.
-  readonly property real desiredHeight:
-    headerRow.implicitHeight + body.implicitHeight + footerRow.implicitHeight
-    + Style.spacing.md * 4 + Style.space(2) * 2
+  // How tall the card should be. Adding the parts up by hand got this wrong:
+  // half the rows are wrapping Text, whose implicitHeight is only truthful once
+  // the width it wraps at is settled, so the sum came in short and the card
+  // squeezed the preview against the footer. Letting the layout report its own
+  // implicitHeight — with the scroller contributing its content height as a
+  // preferred size — is both accurate and self-maintaining.
+  implicitHeight: formLayout.implicitHeight
 
   ColumnLayout {
+    id: formLayout
     anchors.fill: parent
-    spacing: Style.spacing.md
+    // Looser than the rhythm inside the form on purpose: this spacing separates
+    // the three fixed regions — header, scrolling body, footer — and at `md`
+    // the footer rule sat almost against the test field. The rhythm between
+    // fields stays `md`, so the form itself reads the same.
+    spacing: Style.spacing.lg
 
     // ------------------------------------------------------------- header
     RowLayout {
@@ -317,6 +323,10 @@ Item {
     Flickable {
       Layout.fillWidth: true
       Layout.fillHeight: true
+      // Asks for exactly the content, so the card can grow to fit; fillHeight
+      // still lets it give the space back and scroll when the screen is the
+      // shorter of the two. Header and footer sit outside, so they stay put.
+      Layout.preferredHeight: body.implicitHeight
       contentWidth: width
       contentHeight: body.implicitHeight
       clip: true
@@ -619,6 +629,7 @@ Item {
     RowLayout {
       id: footerRow
       Layout.fillWidth: true
+      Layout.bottomMargin: Style.space(2)
       spacing: Style.space(8)
 
       Text {
