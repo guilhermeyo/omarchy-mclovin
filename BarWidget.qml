@@ -29,15 +29,6 @@ Panel {
   readonly property var rules: service ? service.rules : []
   readonly property int todayCount: stats ? stats.count : 0
   readonly property int importCount: service ? service.importableCount : 0
-  readonly property var breakdown: service && stats
-    ? (function() {
-        var out = []
-        var by = stats.byBrowser || {}
-        for (var name in by) out.push({ name: name, count: by[name] })
-        out.sort(function(a, b) { return b.count - a.count })
-        return out
-      })()
-    : []
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -161,49 +152,9 @@ Panel {
         onActivated: if (root.service) root.service.importFromMclovin()
       }
 
-      PanelSeparator { foreground: root.foreground }
-
-      // ------------------------------------------------------------- today
-      PanelSectionHeader {
-        width: parent.width
-        text: "Today"
+      PanelSeparator {
         foreground: root.foreground
-        fontFamily: root.fontFamily
-      }
-
-      Text {
-        width: parent.width
-        visible: root.todayCount === 0
-        text: "No links routed yet"
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-      }
-
-      Repeater {
-        model: root.breakdown
-
-        RowLayout {
-          required property var modelData
-          width: content.width
-          spacing: Style.space(8)
-
-          Text {
-            Layout.fillWidth: true
-            text: String(modelData.name)
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            elide: Text.ElideRight
-          }
-
-          Text {
-            text: String(modelData.count)
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-        }
+        visible: root.stats && root.stats.lastUrl !== ""
       }
 
       // -------------------------------------------------------- last route
