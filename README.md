@@ -136,6 +136,8 @@ omarchy-shell mclovin open https://example.com   # route a URL
 omarchy-shell mclovin status                     # JSON: handler, browsers, profiles, rules, today
 omarchy-shell mclovin refresh                    # re-read browsers and the default handler
 omarchy-shell mclovin importRules                # import from the CLI's rules.toml
+omarchy-shell mclovin becomeDefault              # register as the http/https handler
+omarchy-shell mclovin restoreDefault firefox     # hand the handler back to a real browser
 omarchy-shell mclovin-bar toggle                 # open the bar drop-down (bind a key to this)
 ```
 
@@ -186,6 +188,8 @@ omarchy plugin remove io.github.guilhermeyo.mclovin
 Point the system at a real browser again first, otherwise links have no handler:
 
 ```bash
+omarchy-shell mclovin restoreDefault firefox      # while the plugin is still loaded
+# or, once it is gone:
 xdg-mime default firefox.desktop x-scheme-handler/http x-scheme-handler/https
 rm ~/.local/share/applications/io.github.guilhermeyo.mclovin.desktop
 ```

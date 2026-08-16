@@ -438,6 +438,17 @@ Item {
     function importRules(): string {
       return String(root.importFromMclovin())
     }
+
+    // The same two actions the drop-down offers, scriptable — worth having when
+    // the thing you are trying to fix is the desktop not opening links.
+    function becomeDefault(): string {
+      root.becomeDefault()
+      return "ok"
+    }
+
+    function restoreDefault(browserId: string): string {
+      return root.restoreDefault(browserId) ? "ok" : "unknown browser"
+    }
   }
 
   Component.onCompleted: refreshBrowsers()
