@@ -60,10 +60,19 @@ Panel {
     ? "Checking the default handler…"
     : (isDefault ? "Handling every link" : "Not the default handler")
 
+  // Delete is destructive and sits next to two harmless arrows, so it gets the
+  // one warm colour in the panel on hover.
+  readonly property color urgentish: bar ? bar.urgent : Color.urgent
+
   function summonPicker() {
     root.close()
     if (bar && bar.shell && typeof bar.shell.summon === "function")
       bar.shell.summon(root.pluginId, "{}")
+  }
+
+  function editRule(index) {
+    root.close()
+    if (root.service) root.service.openEditor(index, "")
   }
 
   implicitWidth: button.implicitWidth
@@ -244,10 +253,13 @@ Panel {
         wrapMode: Text.WordWrap
       }
 
+      // Numbered because the number is the semantics: first match wins, so
+      // position is not decoration. Arrows change it without opening anything.
       Repeater {
         model: root.rules
 
         CursorSurface {
+          id: ruleSurface
           required property var modelData
           required property int index
 
@@ -255,6 +267,7 @@ Panel {
           implicitHeight: ruleRow.implicitHeight + Style.spacing.xl
           foreground: root.foreground
           fill: root.hoverFill
+          hasCursor: ruleHover.containsMouse
 
           RowLayout {
             id: ruleRow
@@ -263,13 +276,23 @@ Panel {
             anchors.leftMargin: Style.space(8); anchors.rightMargin: Style.space(8)
             spacing: Style.space(8)
 
+            Text {
+              text: String(ruleSurface.index + 1)
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              Layout.alignment: Qt.AlignVCenter
+              Layout.preferredWidth: Style.space(14)
+              horizontalAlignment: Text.AlignRight
+            }
+
             Column {
               Layout.fillWidth: true
               spacing: 0
 
               Text {
                 width: parent.width
-                text: Router.ruleLabel(modelData)
+                text: Router.ruleSummary(ruleSurface.modelData)
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -278,7 +301,9 @@ Panel {
 
               Text {
                 width: parent.width
-                text: root.service ? root.service.targetName(modelData) : Router.ruleTargetLabel(modelData)
+                text: root.service
+                  ? root.service.targetName(ruleSurface.modelData)
+                  : Router.ruleTargetLabel(ruleSurface.modelData)
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -286,23 +311,53 @@ Panel {
               }
             }
 
-            Text {
-              text: "󰅖"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.icon
-              Layout.alignment: Qt.AlignVCenter
+            PanelActionButton {
+              visible: ruleSurface.index > 0
+              iconText: "󰅃"
+              tooltipText: "Move earlier"
+              foreground: root.dim
+              hoverColor: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: if (root.service) root.service.moveRule(ruleSurface.index, -1)
+            }
 
-              MouseArea {
-                anchors.fill: parent
-                anchors.margins: -Style.space(4)
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.service) root.service.removeRule(index)
-              }
+            PanelActionButton {
+              visible: ruleSurface.index < root.rules.length - 1
+              iconText: "󰅀"
+              tooltipText: "Move later"
+              foreground: root.dim
+              hoverColor: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: if (root.service) root.service.moveRule(ruleSurface.index, 1)
+            }
+
+            PanelActionButton {
+              iconText: "󰅖"
+              tooltipText: "Delete this rule"
+              foreground: root.dim
+              hoverColor: root.urgentish
+              fontFamily: root.fontFamily
+              onClicked: if (root.service) root.service.removeRule(ruleSurface.index)
             }
           }
+
+          // Clicking the row opens the form on it. The buttons above sit on top
+          // and swallow their own clicks, so this only fires on the text.
+          MouseArea {
+            id: ruleHover
+            anchors.fill: parent
+            z: -1
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.editRule(ruleSurface.index)
+          }
         }
+      }
+
+      ActionRow {
+        glyph: "󰐕"
+        label: "Add rule"
+        onActivated: root.editRule(-1)
       }
 
       PanelSeparator { foreground: root.foreground }

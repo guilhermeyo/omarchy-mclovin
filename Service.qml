@@ -330,6 +330,26 @@ Item {
     setConfig(Router.upsertRule(root.config, match, browserId, profile))
   }
   function removeRule(index) { setConfig(Router.removeRuleAt(root.config, index)) }
+
+  // The form's one write. A negative index means "new"; anything else replaces
+  // in place so editing a rule cannot change where it sits in the order.
+  function saveRule(index, rule) {
+    setConfig(index < 0 ? Router.appendRule(root.config, rule)
+                        : Router.setRuleAt(root.config, index, rule))
+  }
+
+  function moveRule(index, delta) { setConfig(Router.moveRule(root.config, index, delta)) }
+
+  // Summoning our own plugin id reaches the overlay, which switches screens on
+  // the payload's `mode`.
+  function openEditor(index, url) {
+    if (!root.shell || typeof root.shell.summon !== "function") return false
+    return root.shell.summon(root.pluginId, JSON.stringify({
+      mode: "editor",
+      ruleIndex: index === undefined ? -1 : index,
+      url: String(url || "")
+    })) === true
+  }
   function setFallback(browserId) {
     var next = Router.normalizeConfig(root.config)
     next.fallback = String(browserId || "")

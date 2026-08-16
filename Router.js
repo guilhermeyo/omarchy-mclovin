@@ -54,48 +54,112 @@ function displayHost(parsed) {
 }
 
 // ------------------------------------------------------------- rule matching
-
-// A rule matches when one of its patterns is a case-insensitive substring of
-// the URL. Substring rather than exact-host so "github.com/acme" can route an
-// org to a different profile than the rest of GitHub — the single most common
-// thing people want from a URL router, and it needs no regex syntax to express.
 //
-// `match` may be a string or a list of strings; `matchRegex` is the escape
-// hatch, and exists mainly so importing an existing rules.toml is lossless.
+// A rule is a matcher kind plus a list of terms. Four kinds, because those are
+// the four things people actually mean when they say "send this somewhere":
+//
+//   startsWith  the link begins with this prefix   https://github.com/acme/
+//   contains    this text appears anywhere in it   invoice
+//   host        the site is exactly this host      example.com
+//   regex       for the two per cent who need it
+//
+// Terms are OR'd: one rule can carry example.com and example.org.
+//
+// The older shape — `match` as a string or array, `matchRegex` for the escape
+// hatch — is still read and migrated on load, so configs written before the
+// form existed keep working and get upgraded on the next save.
+
+var WHEN_STARTS_WITH = "startsWith"
+var WHEN_CONTAINS = "contains"
+var WHEN_HOST = "host"
+var WHEN_REGEX = "regex"
+
+function isWhen(value) {
+  return value === WHEN_STARTS_WITH || value === WHEN_CONTAINS
+    || value === WHEN_HOST || value === WHEN_REGEX
+}
+
+function termList(terms) {
+  var out = []
+  var list = Array.isArray(terms) ? terms : [terms]
+  for (var i = 0; i < list.length; i++) {
+    var v = String(list[i] === undefined || list[i] === null ? "" : list[i]).trim()
+    if (v) out.push(v)
+  }
+  return out
+}
+
+// www is noise on both sides of a host comparison.
+function bareHost(value) {
+  var v = String(value || "").trim().toLowerCase()
+  if (v.indexOf("://") !== -1) v = parseUrl(v).host
+  return v.indexOf("www.") === 0 ? v.slice(4) : v
+}
+
+// A prefix typed without a scheme should still match: people write
+// "github.com/acme" far more often than "https://github.com/acme".
+function matchesPrefix(url, term) {
+  var u = url.toLowerCase()
+  var t = term.toLowerCase()
+  if (u.indexOf(t) === 0) return true
+  var schemeEnd = u.indexOf("://")
+  if (schemeEnd === -1) return false
+  return u.slice(schemeEnd + 3).indexOf(t) === 0
+}
+
+function termMatches(when, term, parsed) {
+  switch (when) {
+    case WHEN_STARTS_WITH:
+      return matchesPrefix(parsed.url, term)
+    case WHEN_HOST:
+      return parsed.domain === bareHost(term)
+    case WHEN_REGEX:
+      try { return new RegExp(term, "i").test(parsed.url) } catch (e) { return false }
+    default:
+      return parsed.url.toLowerCase().indexOf(term.toLowerCase()) !== -1
+  }
+}
+
 function ruleMatches(rule, parsed) {
   if (!rule) return false
-
-  var regex = String(rule.matchRegex || "").trim()
-  if (regex) {
-    try { return new RegExp(regex, "i").test(parsed.url) } catch (e) { return false }
-  }
-
-  var patterns = matchList(rule.match)
-  for (var i = 0; i < patterns.length; i++) {
-    if (parsed.url.toLowerCase().indexOf(patterns[i]) !== -1) return true
+  var terms = termList(rule.terms)
+  for (var i = 0; i < terms.length; i++) {
+    if (termMatches(rule.when, terms[i], parsed)) return true
   }
   return false
 }
 
-function matchList(match) {
-  var out = []
-  if (Array.isArray(match)) {
-    for (var i = 0; i < match.length; i++) {
-      var v = String(match[i] || "").trim().toLowerCase()
-      if (v) out.push(v)
-    }
-    return out
+// Human wording for one matcher kind, used by the form's preview and by the
+// rule rows in the bar drop-down. Reads as a sentence, not as a config key.
+function whenLabel(when) {
+  switch (when) {
+    case WHEN_STARTS_WITH: return "Starts with"
+    case WHEN_HOST: return "Host is"
+    case WHEN_REGEX: return "Matches"
+    default: return "Contains"
   }
-  var single = String(match || "").trim().toLowerCase()
-  return single ? [single] : []
+}
+
+function whenVerb(when) {
+  switch (when) {
+    case WHEN_STARTS_WITH: return "starts with"
+    case WHEN_HOST: return "is on"
+    case WHEN_REGEX: return "matches"
+    default: return "contains"
+  }
 }
 
 // What the bar widget prints for a rule, and what upsert dedupes on.
 function ruleLabel(rule) {
   if (!rule) return ""
-  if (rule.matchRegex) return "/" + rule.matchRegex + "/"
-  var patterns = matchList(rule.match)
-  return patterns.join(", ")
+  var terms = termList(rule.terms)
+  if (rule.when === WHEN_REGEX) return "/" + terms.join("/ or /") + "/"
+  return terms.join("  or  ")
+}
+
+function ruleSummary(rule) {
+  if (!rule) return ""
+  return whenLabel(rule.when) + " " + ruleLabel(rule)
 }
 
 function ruleTargetLabel(rule) {
@@ -103,6 +167,49 @@ function ruleTargetLabel(rule) {
   if (rule.command) return rule.command
   var target = String(rule.browser || "")
   return rule.profile ? target + " · " + rule.profile : target
+}
+
+// A link that would land on this rule, so the form can say "something like
+// this" while the user is still typing. Synthesised from the first term: for a
+// prefix that is already a URL it is the term itself plus a plausible path; for
+// a bare word it is a URL with the word in it.
+function exampleUrl(rule) {
+  var terms = termList(rule && rule.terms)
+  if (terms.length === 0) return ""
+  var term = terms[0]
+
+  switch (rule.when) {
+    case WHEN_HOST:
+      return "https://" + bareHost(term) + "/"
+    case WHEN_STARTS_WITH:
+      if (term.indexOf("://") !== -1) return term.replace(/\/+$/, "") + "/some/page"
+      return "https://" + term.replace(/^\/+|\/+$/g, "") + "/some/page"
+    case WHEN_REGEX:
+      // No honest way to synthesise a URL from an arbitrary pattern; the test
+      // field below it is the answer for regex rules.
+      return ""
+    default:
+      if (term.indexOf("://") !== -1) return term
+      // A term like "github.com/acme" is already most of a URL, and wrapping it
+      // in example.com/ produces a link nobody would ever click. Detect that by
+      // whether the part before the first slash looks like a host.
+      var head = term.split("/")[0]
+      if (head.indexOf(".") !== -1 && head.indexOf(" ") === -1)
+        return "https://" + term.replace(/^\/+|\/+$/g, "") + "/…"
+      return "https://example.com/" + term.replace(/^\/+/, "")
+  }
+}
+
+// Which rule in the list actually wins for a URL. The form uses this to warn
+// when an earlier rule already swallows the link being described — first match
+// wins is easy to state and easy to forget.
+function winningRuleIndex(rules, url) {
+  var parsed = parseUrl(url)
+  var list = rules || []
+  for (var i = 0; i < list.length; i++) {
+    if (ruleMatches(list[i], parsed)) return i
+  }
+  return -1
 }
 
 // First match wins, so rules are ordered most-specific-first by the caller.
@@ -148,14 +255,23 @@ function normalizeConfig(raw) {
 function normalizeRule(raw) {
   if (!raw || typeof raw !== "object") return null
 
-  var out = {}
-  var patterns = matchList(raw.match)
-  var regex = String(raw.matchRegex || "").trim()
-  if (patterns.length === 0 && !regex) return null
+  var when = isWhen(raw.when) ? raw.when : ""
+  var terms = termList(raw.terms)
 
-  if (regex) out.matchRegex = regex
-  if (patterns.length === 1) out.match = patterns[0]
-  else if (patterns.length > 1) out.match = patterns
+  // Migrate the pre-form shape.
+  if (!when) {
+    var regex = String(raw.matchRegex || "").trim()
+    if (regex) {
+      when = WHEN_REGEX
+      terms = [regex]
+    } else {
+      when = WHEN_CONTAINS
+      if (terms.length === 0) terms = termList(raw.match)
+    }
+  }
+  if (terms.length === 0) return null
+
+  var out = { when: when, terms: terms }
 
   var command = String(raw.command || "").trim()
   var browser = String(raw.browser || "").trim()
@@ -172,17 +288,31 @@ function normalizeRule(raw) {
   return out
 }
 
-// Replacing an existing rule for the same pattern rather than appending keeps
+function makeRule(when, terms, browser, profile, command) {
+  return normalizeRule({
+    when: when,
+    terms: terms,
+    browser: browser,
+    profile: profile,
+    command: command
+  })
+}
+
+// Replacing an existing rule for the same matcher rather than appending keeps
 // "remember this" idempotent — picking a different browser for a host you
 // already have a rule for updates it instead of adding a shadowed duplicate.
 function upsertRule(config, match, browser, profile) {
   var next = normalizeConfig(config)
-  var candidate = normalizeRule({ match: match, browser: browser, profile: profile })
+  var candidate = makeRule(WHEN_HOST, [match], browser, profile, "")
   if (!candidate) return next
+  return replaceOrAppend(next, candidate)
+}
 
-  var key = ruleLabel(candidate).toLowerCase()
+function replaceOrAppend(config, candidate) {
+  var next = normalizeConfig(config)
+  var key = ruleKey(candidate)
   for (var i = 0; i < next.rules.length; i++) {
-    if (ruleLabel(next.rules[i]).toLowerCase() === key) {
+    if (ruleKey(next.rules[i]) === key) {
       next.rules[i] = candidate
       return next
     }
@@ -191,10 +321,46 @@ function upsertRule(config, match, browser, profile) {
   return next
 }
 
+// Two rules are "the same rule" when they select the same links, regardless of
+// where they send them.
+function ruleKey(rule) {
+  if (!rule) return ""
+  return String(rule.when) + "::" + termList(rule.terms).join(" ").toLowerCase()
+}
+
+function setRuleAt(config, index, rule) {
+  var next = normalizeConfig(config)
+  var candidate = normalizeRule(rule)
+  if (!candidate) return next
+  if (index < 0 || index >= next.rules.length) return replaceOrAppend(next, candidate)
+  next.rules[index] = candidate
+  return next
+}
+
+function appendRule(config, rule) {
+  var next = normalizeConfig(config)
+  var candidate = normalizeRule(rule)
+  if (!candidate) return next
+  return replaceOrAppend(next, candidate)
+}
+
 function removeRuleAt(config, index) {
   var next = normalizeConfig(config)
   if (index < 0 || index >= next.rules.length) return next
   next.rules.splice(index, 1)
+  return next
+}
+
+// Order is the whole semantics of the rule list, so moving a rule is a
+// first-class edit rather than something you do by hand in the file.
+function moveRule(config, index, delta) {
+  var next = normalizeConfig(config)
+  var target = index + delta
+  if (index < 0 || index >= next.rules.length) return next
+  if (target < 0 || target >= next.rules.length) return next
+  var moved = next.rules[index]
+  next.rules[index] = next.rules[target]
+  next.rules[target] = moved
   return next
 }
 
@@ -635,7 +801,7 @@ function parseMclovinToml(text) {
 
   function flush() {
     if (!current) return
-    var hasMatch = matchList(current.match).length > 0 || current.matchRegex
+    var hasMatch = termList(current.match).length > 0 || current.matchRegex
     var hasTarget = current.command || current.browser
     // A rewrite means the URL is transformed before dispatch, which this plugin
     // does not do. Importing it would route the right link to the right browser
@@ -737,12 +903,12 @@ function resolveImported(imported, browsers) {
 function countNewRules(config, imported, browsers) {
   var current = normalizeConfig(config)
   var have = {}
-  for (var i = 0; i < current.rules.length; i++) have[ruleLabel(current.rules[i]).toLowerCase()] = true
+  for (var i = 0; i < current.rules.length; i++) have[ruleKey(current.rules[i])] = true
 
   var incoming = resolveImported(imported, browsers)
   var count = 0
   for (var j = 0; j < incoming.length; j++) {
-    if (!have[ruleLabel(incoming[j]).toLowerCase()]) count++
+    if (!have[ruleKey(incoming[j])]) count++
   }
   return count
 }
@@ -755,11 +921,11 @@ function mergeImported(config, imported, browsers) {
   var incoming = resolveImported(imported, browsers)
 
   var seen = {}
-  for (var j = 0; j < incoming.length; j++) seen[ruleLabel(incoming[j]).toLowerCase()] = true
+  for (var j = 0; j < incoming.length; j++) seen[ruleKey(incoming[j])] = true
 
   var kept = []
   for (var k = 0; k < next.rules.length; k++) {
-    if (!seen[ruleLabel(next.rules[k]).toLowerCase()]) kept.push(next.rules[k])
+    if (!seen[ruleKey(next.rules[k])]) kept.push(next.rules[k])
   }
 
   next.rules = incoming.concat(kept)

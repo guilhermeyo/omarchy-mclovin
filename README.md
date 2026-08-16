@@ -65,12 +65,52 @@ Firefox from `Profile Groups/*.sqlite` (Firefox 143+) and `profiles.ini` before
 that. The SQLite read shells out to `sqlite3`; without it installed you lose the
 Firefox profile rows and nothing else.
 
-**Rules.** Ticking the remember box writes a rule keyed on the host, minus any
-`www.`. Rules match as a case-insensitive substring of the whole URL, so a
-hand-written `github.com/acme` routes one organisation somewhere different from
-the rest of GitHub. First match wins, and the list is in order.
+**Rules.** Ticking the remember box in the picker writes a rule for that host.
+Everything else happens in the rule form, which is the bar widget's drop-down →
+**Add rule**, or clicking any rule in the list to edit it.
 
-Delete a rule from the bar widget's drop-down.
+## The rule form
+
+Three questions, in order, with the answer to the third visible while you
+answer the first two.
+
+**When a link…** picks how the rule matches:
+
+| | Catches | Good for |
+|---|---|---|
+| **Starts with** | the link begins with this | one section of a site — `github.com/acme/` |
+| **Contains** | the text appears anywhere | a word — `invoice` |
+| **Host is** | the link is on exactly this site, www or not | `example.com` |
+| **Regex** | a case-insensitive pattern | the rest |
+
+Regex lives behind the **advanced** link in the corner, so it is one click away
+rather than in the way. A rule opened for editing that already uses one expands
+it for you.
+
+**+ Add another** gives the rule a second term, a third, and so on. Any one of
+them matching is enough, so `example.com` and `example.org` live in one rule instead of
+two.
+
+**Open it in…** is either a browser — picked from the same browser·profile list
+the picker shows, never a field you have to guess the spelling of — or a command
+with `{url}` in it.
+
+**Preview** is the part that makes the rest trustworthy:
+
+- *"A link like https://github.com/acme/… would open in Chromium · Work."*
+  Rewritten on every keystroke.
+- A **Try a link…** box that says `matches` or `no match` against what you type.
+  For regex rules this replaces the example, since there is no honest way to
+  invent a URL from a pattern.
+- A warning when an **earlier rule already catches the link**, naming it:
+  *"Rule 1 (Contains github.com/acme) catches this link first, so this
+  rule would never run for it. Move this rule up."*
+
+**Order is the semantics.** First match wins, so rules are numbered in the
+drop-down and every row has ↑ ↓ next to its ×. The form header says where the
+rule sits (`Rule 2 of 5 — earlier rules win`) and carries the same arrows.
+
+`Ctrl+Enter` saves, `Esc` cancels. You never see the config file.
 
 **Opening a browser with no link.** Right-click the bar icon, or use the
 drop-down's **Open the picker**. Same window, no URL, picks just launch the
@@ -81,25 +121,30 @@ browser.
 Rules live in `~/.config/omarchy-mclovin/config.json`. The plugin watches the
 file, so editing it by hand takes effect immediately.
 
+The form writes this for you; it is documented because the file is yours and
+editing it by hand still works — the plugin watches it and reloads.
+
 ```json
 {
   "version": 1,
   "fallback": "",
   "webapp": "",
   "rules": [
-    { "match": "github.com/acme", "browser": "chromium", "profile": "Work" },
-    { "match": ["example.com", "example.org"], "browser": "firefox" },
-    { "match": "zoom.us", "command": "brave {url}" },
-    { "matchRegex": "^https?://(\\w+)\\.internal\\.", "browser": "chromium" }
+    { "when": "startsWith", "terms": ["github.com/acme"], "browser": "chromium", "profile": "Work" },
+    { "when": "host", "terms": ["example.com", "example.org"], "browser": "firefox" },
+    { "when": "contains", "terms": ["zoom.us"], "command": "brave {url}" },
+    { "when": "regex", "terms": ["^https?://(\\w+)\\.internal\\."], "browser": "chromium" }
   ]
 }
 ```
 
-Matchers, first one that fits wins:
+Matchers, first rule that fits wins:
 
-- `match` — case-insensitive substring of the URL. A string, or a list of them.
-- `matchRegex` — case-insensitive regular expression, when substring is not
-  enough.
+- `when` — `startsWith`, `contains`, `host`, or `regex`.
+- `terms` — one or more; any of them matching is enough.
+
+The older shape (`match` as a string or array, `matchRegex` for patterns) is
+still read and is migrated to the above the next time anything is saved.
 
 Targets, one per rule:
 

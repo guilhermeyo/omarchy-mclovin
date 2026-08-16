@@ -11,7 +11,7 @@
   "entryPoints": {
     "service": "Service.qml",
     "barWidget": "BarWidget.qml",
-    "overlay": "Picker.qml"
+    "overlay": "Overlay.qml"
   },
   "barWidget": {
     "displayName": "mclovin",
