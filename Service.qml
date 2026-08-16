@@ -26,6 +26,9 @@ Item {
   // The panel is optional; the service is not.
   property var panel: null
 
+  // The last command line handed to a browser, for `status` to report.
+  property var lastLaunch: null
+
   readonly property string pluginId: (manifest && manifest.id) || "io.github.guilhermeyo.mclovin"
   readonly property string home: Quickshell.env("HOME")
   readonly property string configDir: home + "/.config/omarchy-mclovin"
@@ -314,6 +317,11 @@ Item {
     var argv = Browsers.launchArgs(entry.id, entry.execString, url, dir, target.private === true)
     if (!argv.length) return false
 
+    // Kept as state rather than a log line: when a link lands in the wrong
+    // browser the only question that matters is what was actually run, and
+    // `status` is where someone already looks.
+    root.lastLaunch = { browser: entry.id, profile: target.profile,
+                        directory: dir, private: target.private === true, argv: argv }
     Quickshell.execDetached(argv)
     return true
   }
@@ -547,6 +555,7 @@ Item {
         fallback: root.fallbackBrowser,
         today: root.stats.count,
         importable: root.importableCount,
+        lastLaunch: root.lastLaunch,
         profiles: (function() {
           var out = {}
           for (var k in root.profilesByBrowser) out[k] = root.profilesByBrowser[k].length
