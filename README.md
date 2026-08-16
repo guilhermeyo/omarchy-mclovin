@@ -17,8 +17,11 @@ rules could take the same link the narrower one wins, so there is no ordering to
 maintain.
 
 <p align="center">
-  <img src="preview-picker.png" width="46%" alt="The browser picker, listing four browsers with their profiles">
-  <img src="preview-form.png" width="52%" alt="The rule form, with matcher, destination, and a live preview">
+  <img src="preview-picker.png" width="49%" alt="The browser picker, listing four browsers with their profiles">
+  <img src="preview-picker-rule.png" width="49%" alt="The same picker with Always ticked, showing the term field and the Site, Path and Contains shapes">
+</p>
+<p align="center">
+  <img src="preview-form.png" width="72%" alt="The rule form, with matcher, destination, and a live preview">
 </p>
 
 Everything runs inside `omarchy-shell` as QML. There is no daemon, no compiled
@@ -78,14 +81,24 @@ two boxes, and the second one is a whole rule on one line:
 
 ```
 ☐  Private — just this once
+☐  Always
+```
+
+Tick it and the line grows into the rule it will write:
+
+```
+☐  Private — just this once
 ☑  Always  Brave · Default · site  [ github.com ]   Site   Path   Contains
                                                     ‾‾‾‾
 ```
 
-The three shapes are a detail of the Always line, not a second row of buttons:
-caption-sized, equal width, no box, and ghosted until Always is ticked. The
-active one is marked with a hairline, not a fill. Clicking a ghosted one ticks
-Always with that shape already chosen.
+Until then none of that exists — no field, no shapes, no summary. Private and
+Always are the two actions here; everything else is a detail of one of them and
+only appears when it has something to say. The card shrinks to match, so the
+unticked state is two checkboxes rather than two checkboxes and a hole.
+
+The three shapes are not buttons either: caption-sized, all the width of the
+longest label, no box and no fill, with a hairline under the active one.
 
 The link you clicked was `https://github.com/acme/app/issues/1842`, but the rule
 is never the URL you happened to open. It is the term in the field, matched the

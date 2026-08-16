@@ -387,7 +387,12 @@ Item {
         font.pixelSize: Style.font.body
       }
 
+      // Nothing below exists until Always is ticked. Unticked, this line is one
+      // checkbox and one word — a question, not a form. `visible: false` takes
+      // items out of the layout entirely, so the row and the card shrink with
+      // them instead of leaving the hole a ghosted control would.
       Text {
+        visible: root.remember
         text: root.rememberSummary
         color: root.dim
         font.family: root.fontFamily
@@ -399,6 +404,7 @@ Item {
       }
 
       TextField {
+        visible: root.remember
         Layout.fillWidth: true
         Layout.preferredWidth: 0
         Layout.minimumWidth: Style.space(90)
@@ -406,13 +412,12 @@ Item {
         text: root.rememberTerm
         placeholderText: root.host
         onTextChanged: root.rememberTerm = text
-        // Typing here is a statement of intent; arm the checkbox with it.
-        onActiveFocusChanged: if (activeFocus && root.url) root.remember = true
       }
 
       // Tighter than the row's own spacing so the three read as one strip
       // hanging off the field, not as three more controls in the line.
       RowLayout {
+        visible: root.remember
         Layout.alignment: Qt.AlignVCenter
         spacing: Style.space(2)
 
@@ -420,6 +425,10 @@ Item {
         Chip { label: "Path";     when: Router.WHEN_STARTS_WITH }
         Chip { label: "Contains"; when: Router.WHEN_CONTAINS }
       }
+
+      // Holds the right edge while the row is just a checkbox, so ticking
+      // Always grows the line rather than shoving it sideways.
+      Item { Layout.fillWidth: true; visible: !root.remember }
     }
 
     Text {
@@ -479,7 +488,7 @@ Item {
   // How the remembered rule matches. Deliberately not a button: no box, no
   // fill, caption-sized dim text with a hairline under the active one. Private
   // and Always are the actions on these two lines; this is a detail of one of
-  // them, and it only earns presence once Always is on.
+  // them, and it does not exist at all until that one is ticked.
   component Chip: Item {
     id: chip
     property string label: ""
@@ -489,9 +498,6 @@ Item {
     Layout.alignment: Qt.AlignVCenter
     Layout.preferredWidth: chipMetrics.width + Style.space(6)
     implicitHeight: chipText.implicitHeight + Style.space(5)
-
-    opacity: root.remember ? 1 : 0.25
-    Behavior on opacity { NumberAnimation { duration: 110 } }
 
     Text {
       id: chipText
@@ -517,12 +523,7 @@ Item {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      // Clicking a ghosted chip is how you arm Always with that shape already
-      // chosen, which is one gesture instead of two.
-      onClicked: {
-        root.setRememberWhen(chip.when)
-        root.remember = true
-      }
+      onClicked: root.setRememberWhen(chip.when)
     }
   }
 }
