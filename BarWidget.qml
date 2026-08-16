@@ -32,6 +32,7 @@ Panel {
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property color faint: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.38)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
@@ -111,7 +112,10 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    contentWidth: panel.fittedContentWidth(Style.space(340))
+    // Wider than a typical bar panel because the rule rows carry a term and a
+    // destination side by side, and squeezing either into an ellipsis defeats
+    // the point of listing them.
+    contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(620))
 
     Column {
@@ -216,7 +220,7 @@ Panel {
           required property int index
 
           width: content.width
-          implicitHeight: ruleRow.implicitHeight + Style.spacing.xl
+          implicitHeight: ruleRow.implicitHeight + Style.spacing.lg
           foreground: root.foreground
           fill: root.hoverFill
           hasCursor: ruleHover.containsMouse
@@ -225,52 +229,66 @@ Panel {
             id: ruleRow
             anchors.left: parent.left; anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: Style.space(8); anchors.rightMargin: Style.space(8)
+            anchors.leftMargin: Style.space(6); anchors.rightMargin: Style.space(6)
             spacing: Style.space(8)
 
-            // The matcher kind in its own column, so the terms line up and the
-            // rows read as a table of "how" and "what".
-            Text {
-              text: Router.whenLabel(ruleSurface.modelData.when)
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              Layout.alignment: Qt.AlignTop
-              Layout.topMargin: Style.space(1)
-              Layout.preferredWidth: Style.space(72)
-            }
-
-            Column {
-              Layout.fillWidth: true
-              spacing: 0
+            // The matcher is context, not content — one glyph in a chip. The
+            // legend under the list says what each one means.
+            Rectangle {
+              Layout.alignment: Qt.AlignVCenter
+              Layout.preferredWidth: Style.space(18)
+              Layout.preferredHeight: Style.space(18)
+              radius: Math.max(2, Style.cornerRadius)
+              color: "transparent"
+              border.width: 1
+              border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
 
               Text {
-                width: parent.width
-                text: Router.ruleLabel(ruleSurface.modelData)
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-              }
-
-              Text {
-                width: parent.width
-                text: root.service
-                  ? root.service.targetName(ruleSurface.modelData)
-                  : Router.ruleTargetLabel(ruleSurface.modelData)
+                anchors.centerIn: parent
+                text: Router.whenBadge(ruleSurface.modelData.when)
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
+                font.bold: true
               }
+            }
+
+            // The term is the rule. Extra terms share this cell.
+            Text {
+              Layout.fillWidth: true
+              Layout.preferredWidth: 0
+              Layout.alignment: Qt.AlignVCenter
+              text: Router.ruleTerms(ruleSurface.modelData)
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              elide: Text.ElideRight
+            }
+
+            // Destination trails on the same line, capped so a long profile
+            // name cannot squeeze the term it belongs to. Elided from the right
+            // because the browser is the part you scan for — cutting the head
+            // off "Chromium · Work" hides which browser it is.
+            Text {
+              Layout.alignment: Qt.AlignVCenter
+              Layout.maximumWidth: ruleRow.width * 0.40
+              text: root.service
+                ? root.service.targetName(ruleSurface.modelData)
+                : Router.ruleTargetLabel(ruleSurface.modelData)
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+              horizontalAlignment: Text.AlignRight
             }
 
             PanelActionButton {
               iconText: "󰅖"
               tooltipText: "Delete this rule"
-              foreground: root.dim
+              foreground: root.faint
               hoverColor: root.urgentish
               fontFamily: root.fontFamily
+              size: Style.space(20)
               onClicked: if (root.service) root.service.removeRule(ruleSurface.index)
             }
           }
@@ -286,6 +304,18 @@ Panel {
             onClicked: root.editRule(ruleSurface.index)
           }
         }
+      }
+
+      // Four symbols cost one dim line and teach the whole vocabulary at once,
+      // which a per-row tooltip cannot.
+      Text {
+        width: parent.width
+        visible: root.rules.length > 0
+        text: "^ starts with    ~ contains    @ host    / regex"
+        color: root.faint
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignHCenter
       }
 
       ActionRow {

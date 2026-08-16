@@ -140,6 +140,19 @@ function whenLabel(when) {
   }
 }
 
+// A single glyph for the rule list, where the matcher is context and the term
+// is the content. Borrowed from where each symbol already means this: ^ anchors
+// a prefix in regex, / delimits a pattern, @ prefixes a host, ~ is the
+// "approximately/contains" operator in a dozen query languages.
+function whenBadge(when) {
+  switch (when) {
+    case WHEN_STARTS_WITH: return "^"
+    case WHEN_HOST: return "@"
+    case WHEN_REGEX: return "/"
+    default: return "~"
+  }
+}
+
 function whenVerb(when) {
   switch (when) {
     case WHEN_STARTS_WITH: return "starts with"
@@ -155,6 +168,13 @@ function ruleLabel(rule) {
   var terms = termList(rule.terms)
   if (rule.when === WHEN_REGEX) return "/" + terms.join("/ or /") + "/"
   return terms.join("  or  ")
+}
+
+// The compact form for the rule list: extra terms sit in the same cell behind a
+// separator instead of repeating the matcher on a second row.
+function ruleTerms(rule) {
+  if (!rule) return ""
+  return termList(rule.terms).join("  ·  ")
 }
 
 function ruleSummary(rule) {
