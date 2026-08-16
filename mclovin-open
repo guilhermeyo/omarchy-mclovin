@@ -18,6 +18,68 @@ url=${1:-}
 
 config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mclovin/config.json"
 
+setting() {
+  [ -r "$config" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  value=$(jq -r "$1 // empty" "$config" 2>/dev/null) || return 1
+  [ -n "$value" ] || return 1
+  printf '%s' "$value"
+}
+
+# Find a .desktop by id and print the program its Exec= line starts with.
+desktop_program() {
+  id=$1
+  case $id in
+    *.desktop) ;;
+    *) id="$id.desktop" ;;
+  esac
+  for dir in \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
+    /usr/local/share/applications \
+    /usr/share/applications \
+    /var/lib/flatpak/exports/share/applications
+  do
+    [ -f "$dir/$id" ] || continue
+    sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$dir/$id" | head -n1
+    return 0
+  done
+  return 1
+}
+
+# First installed browser that is not this handler, as a desktop id.
+first_browser() {
+  for dir in \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
+    /usr/share/applications
+  do
+    [ -d "$dir" ] || continue
+    for file in "$dir"/*.desktop; do
+      [ -f "$file" ] || continue
+      case $file in
+        *io.github.guilhermeyo.mclovin.desktop) continue ;;
+      esac
+      grep -qi '^Categories=.*WebBrowser' "$file" || continue
+      basename "$file"
+      return 0
+    done
+  done
+  return 1
+}
+
+# `omarchy-launch-webapp` invokes the default browser as `<browser> --app=URL`.
+# That is a chromeless window for one site, not a link to route, so it never
+# reaches the picker — it goes straight to the configured webapp browser.
+case $url in
+  --app=*)
+    app_url=${url#--app=}
+    shift
+    target=$(setting '.webapp') || target=$(setting '.fallback') || target=$(first_browser) || target=""
+    [ -n "$target" ] || exit 1
+    program=$(desktop_program "$target") || exit 1
+    exec setsid "$program" --app="$app_url" "$@"
+    ;;
+esac
+
 # Locate a .desktop by id across the standard data dirs and run its Exec line
 # with the URL substituted. Used only on the fallback path.
 launch_desktop() {
@@ -61,32 +123,16 @@ if command -v omarchy-shell >/dev/null 2>&1; then
   esac
 fi
 
-# Shell down, plugin disabled, or the picker could not be summoned.
-if [ -r "$config" ] && command -v jq >/dev/null 2>&1; then
-  fallback=$(jq -r '.fallback // empty' "$config" 2>/dev/null || true)
-  if [ -n "$fallback" ] && launch_desktop "$fallback"; then
-    exit 0
-  fi
+# Shell down, plugin disabled, or the picker could not be summoned. Try the
+# configured fallback, then any installed browser — a link is never dropped
+# just because the shell is not answering.
+if fallback=$(setting '.fallback') && launch_desktop "$fallback"; then
+  exit 0
 fi
 
-# No configured fallback either: take the first installed web browser that is
-# not this handler.
-for dir in \
-  "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
-  /usr/share/applications
-do
-  [ -d "$dir" ] || continue
-  for file in "$dir"/*.desktop; do
-    [ -f "$file" ] || continue
-    case $file in
-      *io.github.guilhermeyo.mclovin.desktop) continue ;;
-    esac
-    grep -qi '^Categories=.*WebBrowser' "$file" || continue
-    if launch_desktop "$(basename "$file")"; then
-      exit 0
-    fi
-  done
-done
+if any=$(first_browser) && launch_desktop "$any"; then
+  exit 0
+fi
 
 if command -v notify-send >/dev/null 2>&1; then
   notify-send -u critical "mclovin" "Could not open $url — no browser found and the Omarchy shell is not responding."

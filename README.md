@@ -66,19 +66,62 @@ file, so editing it by hand takes effect immediately.
 {
   "version": 1,
   "fallback": "",
+  "webapp": "",
   "rules": [
-    { "match": "github.com/acme", "browser": "chromium" },
-    { "match": "github.com",      "browser": "firefox" },
-    { "match": "figma.com",       "browser": "google-chrome" }
+    { "match": "github.com/acme", "browser": "chromium", "profile": "Work" },
+    { "match": ["example.com", "example.org"], "browser": "firefox" },
+    { "match": "zoom.us", "command": "brave {url}" },
+    { "matchRegex": "^https?://(\\w+)\\.internal\\.", "browser": "chromium" }
   ]
 }
 ```
 
-- `match` — case-insensitive substring of the URL.
-- `browser` — a desktop entry id, with or without the `.desktop` suffix. The
-  drop-down shows the ids you have.
+Matchers, first one that fits wins:
+
+- `match` — case-insensitive substring of the URL. A string, or a list of them.
+- `matchRegex` — case-insensitive regular expression, when substring is not
+  enough.
+
+Targets, one per rule:
+
+- `browser` — a desktop entry id, with or without the `.desktop` suffix.
+- `profile` — optional, alongside `browser`. Name it the way the browser's
+  profile switcher does ("Work", not "Profile 3"); mclovin reads the mapping out
+  of the browser's own `Local State`. Chromium-family gets
+  `--profile-directory`, Firefox gets `-P`.
+- `command` — a raw command line with `{url}` where the link goes, for anything
+  that is not a plain browser.
+
+And two settings:
+
 - `fallback` — a browser to use when nothing matches, instead of showing the
   picker. Leave it empty to always ask.
+- `webapp` — which browser gets `--app=` windows from `omarchy-launch-webapp`.
+  Falls back to `fallback`, then to the first browser found. Webapps never open
+  the picker.
+
+## Importing from the mclovin CLI
+
+If you have the [mclovin CLI](https://github.com/guilhermeyo/mclovin) with rules
+in `~/.config/mclovin/rules.toml`, the drop-down offers **Import N rules from
+the mclovin CLI**. It reads the TOML, resolves browser names to desktop entry
+ids, and prepends the rules in file order — both routers are first-match-wins,
+so the order you already tuned carries over. Profiles and `command =` rules come
+across intact.
+
+It is a one-shot copy, not a live binding. After importing, this plugin owns its
+config and the CLI can go away.
+
+Two things do not come across:
+
+- **`rewrite` rules** are skipped. This plugin dispatches URLs, it does not
+  transform them, and importing the match without the rewrite would send the
+  right link to the right browser with the wrong address.
+- **`fallback_browser`** is not imported. In the CLI it is an emergency backstop
+  used only when the picker cannot open; here the same word means "route there
+  instead of asking". Copying it would silently switch the picker off.
+
+The offer disappears once there is nothing left to take.
 
 Today's counters live in `~/.cache/omarchy-mclovin/stats.json` and reset at
 midnight.
@@ -90,8 +133,9 @@ to the icon. Set it in `~/.config/omarchy/shell.json` on the widget's entry.
 
 ```bash
 omarchy-shell mclovin open https://example.com   # route a URL
-omarchy-shell mclovin status                     # JSON: handler, browsers, rules, today
+omarchy-shell mclovin status                     # JSON: handler, browsers, profiles, rules, today
 omarchy-shell mclovin refresh                    # re-read browsers and the default handler
+omarchy-shell mclovin importRules                # import from the CLI's rules.toml
 omarchy-shell mclovin-bar toggle                 # open the bar drop-down (bind a key to this)
 ```
 
@@ -116,6 +160,22 @@ both schemes.
 If the shell is not running when a link is clicked, the script falls back to
 launching your configured `fallback` browser directly, and failing that, the
 first installed browser it finds. A link is never silently swallowed.
+
+### Webapps
+
+`omarchy-launch-webapp` calls the default browser as `<browser> --app=URL`, and
+it only does that for browsers on a hard-coded whitelist — anything else it
+replaces with `chromium.desktop`. mclovin's id is not on that list, so **webapps
+open in Chromium unless you widen it**:
+
+```bash
+sudo sed -i 's/| mclovin\*)/| mclovin* | io.github.guilhermeyo.mclovin*)/' \
+  "$(command -v omarchy-launch-webapp)"
+```
+
+The shim recognises `--app=` and hands it straight to the `webapp` browser from
+your config without going near the picker. Note that an `omarchy update` will
+restore the original whitelist.
 
 ## Uninstall
 

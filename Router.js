@@ -55,14 +55,54 @@ function displayHost(parsed) {
 
 // ------------------------------------------------------------- rule matching
 
-// A rule matches when its pattern is a case-insensitive substring of the URL.
-// Substring rather than exact-host so "github.com/acme" can route an org to a
-// different profile than the rest of GitHub — the single most common thing
-// people want from a URL router, and it needs no regex syntax to express.
+// A rule matches when one of its patterns is a case-insensitive substring of
+// the URL. Substring rather than exact-host so "github.com/acme" can route an
+// org to a different profile than the rest of GitHub — the single most common
+// thing people want from a URL router, and it needs no regex syntax to express.
+//
+// `match` may be a string or a list of strings; `matchRegex` is the escape
+// hatch, and exists mainly so importing an existing rules.toml is lossless.
 function ruleMatches(rule, parsed) {
-  var pattern = String((rule && rule.match) || "").trim().toLowerCase()
-  if (!pattern) return false
-  return parsed.url.toLowerCase().indexOf(pattern) !== -1
+  if (!rule) return false
+
+  var regex = String(rule.matchRegex || "").trim()
+  if (regex) {
+    try { return new RegExp(regex, "i").test(parsed.url) } catch (e) { return false }
+  }
+
+  var patterns = matchList(rule.match)
+  for (var i = 0; i < patterns.length; i++) {
+    if (parsed.url.toLowerCase().indexOf(patterns[i]) !== -1) return true
+  }
+  return false
+}
+
+function matchList(match) {
+  var out = []
+  if (Array.isArray(match)) {
+    for (var i = 0; i < match.length; i++) {
+      var v = String(match[i] || "").trim().toLowerCase()
+      if (v) out.push(v)
+    }
+    return out
+  }
+  var single = String(match || "").trim().toLowerCase()
+  return single ? [single] : []
+}
+
+// What the bar widget prints for a rule, and what upsert dedupes on.
+function ruleLabel(rule) {
+  if (!rule) return ""
+  if (rule.matchRegex) return "/" + rule.matchRegex + "/"
+  var patterns = matchList(rule.match)
+  return patterns.join(", ")
+}
+
+function ruleTargetLabel(rule) {
+  if (!rule) return ""
+  if (rule.command) return rule.command
+  var target = String(rule.browser || "")
+  return rule.profile ? target + " · " + rule.profile : target
 }
 
 // First match wins, so rules are ordered most-specific-first by the caller.
@@ -86,37 +126,68 @@ function normalizeConfig(raw) {
   var rules = Array.isArray(parsed.rules) ? parsed.rules : []
   var clean = []
   for (var i = 0; i < rules.length; i++) {
-    var r = rules[i]
-    if (!r || typeof r !== "object") continue
-    var match = String(r.match || "").trim()
-    var browser = String(r.browser || "").trim()
-    if (!match || !browser) continue
-    clean.push({ match: match, browser: browser })
+    var r = normalizeRule(rules[i])
+    if (r) clean.push(r)
   }
 
   return {
     version: CONFIG_VERSION,
     fallback: String(parsed.fallback || "").trim(),
+    fallbackProfile: String(parsed.fallbackProfile || "").trim(),
+    // Which browser gets `--app=` windows. Never the picker: a webapp launcher
+    // asking which browser to use every time would be unusable.
+    webapp: String(parsed.webapp || "").trim(),
     rules: clean
   }
+}
+
+// A rule needs somewhere to send the URL — either a desktop entry (optionally
+// with a browser profile) or a raw command line containing {url}. Anything
+// without a matcher or without a target is dropped rather than kept as a rule
+// that can never fire.
+function normalizeRule(raw) {
+  if (!raw || typeof raw !== "object") return null
+
+  var out = {}
+  var patterns = matchList(raw.match)
+  var regex = String(raw.matchRegex || "").trim()
+  if (patterns.length === 0 && !regex) return null
+
+  if (regex) out.matchRegex = regex
+  if (patterns.length === 1) out.match = patterns[0]
+  else if (patterns.length > 1) out.match = patterns
+
+  var command = String(raw.command || "").trim()
+  var browser = String(raw.browser || "").trim()
+  if (command) {
+    out.command = command
+  } else if (browser) {
+    out.browser = browser
+    var profile = String(raw.profile || "").trim()
+    if (profile) out.profile = profile
+  } else {
+    return null
+  }
+
+  return out
 }
 
 // Replacing an existing rule for the same pattern rather than appending keeps
 // "remember this" idempotent — picking a different browser for a host you
 // already have a rule for updates it instead of adding a shadowed duplicate.
-function upsertRule(config, match, browser) {
+function upsertRule(config, match, browser, profile) {
   var next = normalizeConfig(config)
-  var pattern = String(match || "").trim()
-  var target = String(browser || "").trim()
-  if (!pattern || !target) return next
+  var candidate = normalizeRule({ match: match, browser: browser, profile: profile })
+  if (!candidate) return next
 
+  var key = ruleLabel(candidate).toLowerCase()
   for (var i = 0; i < next.rules.length; i++) {
-    if (next.rules[i].match.toLowerCase() === pattern.toLowerCase()) {
-      next.rules[i] = { match: pattern, browser: target }
+    if (ruleLabel(next.rules[i]).toLowerCase() === key) {
+      next.rules[i] = candidate
       return next
     }
   }
-  next.rules.push({ match: pattern, browser: target })
+  next.rules.push(candidate)
   return next
 }
 
@@ -185,6 +256,103 @@ function expandExec(execString, url) {
   return out
 }
 
+// A rule's `command` is a shell-ish line like "brave {url}". Same tokenizer as
+// Exec=, with {url} as the placeholder. An empty {url} (the picker launched
+// with no link) collapses the token away instead of passing "" to the browser.
+function expandCommand(command, url) {
+  var tokens = tokenizeExec(command)
+  var out = []
+  var target = String(url || "")
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i].replace(/\{url\}/g, target)
+    if (t) out.push(t)
+  }
+  return out
+}
+
+// -------------------------------------------------------------------- profiles
+
+// Where each Chromium-family browser keeps the Local State file that maps a
+// profile's on-disk directory to its display name. Paths are relative to
+// ~/.config. Desktop entry ids do not map to directory names by any rule
+// ("com.google.Chrome" lives in google-chrome/), so this is a lookup table with
+// a generic guess appended for forks nobody has heard of yet.
+function localStateCandidates(browserId) {
+  var id = String(browserId || "").toLowerCase()
+  var out = []
+  if (id.indexOf("brave") !== -1) out.push("BraveSoftware/Brave-Browser/Local State")
+  if (id.indexOf("chromium") !== -1) out.push("chromium/Local State")
+  if (id.indexOf("chrome") !== -1) {
+    out.push("google-chrome/Local State")
+    out.push("google-chrome-stable/Local State")
+    out.push("google-chrome-beta/Local State")
+    out.push("google-chrome-unstable/Local State")
+  }
+  if (id.indexOf("edge") !== -1) {
+    out.push("microsoft-edge/Local State")
+    out.push("microsoft-edge-stable/Local State")
+  }
+  if (id.indexOf("vivaldi") !== -1) out.push("vivaldi/Local State")
+  if (out.length === 0) out.push(id + "/Local State")
+  return out
+}
+
+function isChromiumFamily(browserId) {
+  var id = String(browserId || "").toLowerCase()
+  return id.indexOf("brave") !== -1 || id.indexOf("chrom") !== -1
+    || id.indexOf("edge") !== -1 || id.indexOf("vivaldi") !== -1
+}
+
+// info_cache keys are the directory names ("Default", "Profile 3"); each value
+// carries the name the user sees in the browser's profile switcher.
+function parseProfileEntries(raw) {
+  var data = raw
+  if (typeof raw === "string") {
+    try { data = JSON.parse(raw) } catch (e) { return [] }
+  }
+  if (!data || typeof data !== "object") return []
+  var cache = data.profile && data.profile.info_cache
+  if (!cache || typeof cache !== "object") return []
+
+  var out = []
+  for (var dir in cache) {
+    var info = cache[dir] || {}
+    out.push({ dir: dir, name: String(info.name || dir) })
+  }
+  out.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0) })
+  return out
+}
+
+// Rules name the profile the way the user sees it. Fall back to treating the
+// value as a directory name, which is what someone hand-editing the config is
+// most likely to have written.
+function resolveProfileDirectory(entries, displayName) {
+  var wanted = String(displayName || "").trim()
+  if (!wanted) return ""
+  var list = entries || []
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].name) === wanted) return String(list[i].dir)
+  }
+  for (var j = 0; j < list.length; j++) {
+    if (String(list[j].dir) === wanted) return String(list[j].dir)
+  }
+  return wanted
+}
+
+// The flag has to land right after the binary, before any URL: Chromium hands
+// a URL to an already-running process and only honours the profile when the
+// flag precedes it.
+function applyProfile(argv, browserId, profileDirectory) {
+  if (!profileDirectory || argv.length === 0) return argv
+  var out = argv.slice()
+  var flag = isChromiumFamily(browserId)
+    ? "--profile-directory=" + profileDirectory
+    : "-P"
+  out.splice(1, 0, flag)
+  if (!isChromiumFamily(browserId)) out.splice(2, 0, profileDirectory)
+  return out
+}
+
 // ------------------------------------------------------------------- browsers
 
 // DesktopEntry.categories is a QStringList, which reaches JS as an array-LIKE
@@ -241,6 +409,208 @@ function filterBrowsers(entries, query) {
     if (name.indexOf(q) !== -1 || id.indexOf(q) !== -1) out.push(e)
   }
   return out
+}
+
+// ------------------------------------------------------------ rules.toml import
+
+// A deliberately small TOML reader: enough for the shape the mclovin CLI
+// writes, and nothing else. It is not a general TOML parser and does not try to
+// be — the alternative was vendoring one into a plugin whose whole point is
+// being light.
+//
+// Handles: root key/value pairs, [[handler]] array-of-tables, the
+// [handler.browser] sub-table, string and string-array values, single or double
+// quotes, full-line and trailing comments outside quotes.
+function parseTomlValue(raw) {
+  var v = String(raw || "").trim()
+  if (!v) return ""
+
+  if (v.charAt(0) === "[") {
+    var inner = v.slice(1, v.lastIndexOf("]"))
+    var parts = []
+    var buf = ""
+    var quote = ""
+    for (var i = 0; i < inner.length; i++) {
+      var c = inner.charAt(i)
+      if (quote) {
+        if (c === quote) { quote = "" } else { buf += c }
+        continue
+      }
+      if (c === "\"" || c === "'") { quote = c; continue }
+      if (c === ",") { if (buf.trim()) parts.push(buf.trim()); buf = ""; continue }
+      buf += c
+    }
+    if (buf.trim()) parts.push(buf.trim())
+    return parts
+  }
+
+  var q = v.charAt(0)
+  if (q === "\"" || q === "'") {
+    var end = v.lastIndexOf(q)
+    return end > 0 ? v.slice(1, end) : v.slice(1)
+  }
+  return v
+}
+
+// Strip a trailing comment, but only when the # is outside a quoted string —
+// URLs with fragments live in these files.
+function stripComment(line) {
+  var quote = ""
+  for (var i = 0; i < line.length; i++) {
+    var c = line.charAt(i)
+    if (quote) {
+      if (c === quote) quote = ""
+      continue
+    }
+    if (c === "\"" || c === "'") { quote = c; continue }
+    if (c === "#") return line.slice(0, i)
+  }
+  return line
+}
+
+function parseMclovinToml(text) {
+  var lines = String(text || "").split("\n")
+  var out = { fallback: "", rules: [], skipped: 0 }
+  var current = null
+  var section = ""      // "" = root, "handler" = inside [[handler]], "handler.browser"
+
+  function flush() {
+    if (!current) return
+    var hasMatch = matchList(current.match).length > 0 || current.matchRegex
+    var hasTarget = current.command || current.browser
+    // A rewrite means the URL is transformed before dispatch, which this plugin
+    // does not do. Importing it would route the right link to the right browser
+    // but silently drop the rewrite, so leave it behind and say so.
+    if (hasMatch && hasTarget && !current.rewrite) out.rules.push(current)
+    else out.skipped++
+    current = null
+  }
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = stripComment(lines[i]).trim()
+    if (!line) continue
+
+    if (line === "[[handler]]") {
+      flush()
+      current = {}
+      section = "handler"
+      continue
+    }
+    if (line === "[handler.browser]") {
+      section = "handler.browser"
+      continue
+    }
+    if (line.charAt(0) === "[") {
+      // Any other table ([webapp], [[something-else]]) ends the current handler.
+      flush()
+      section = "other"
+      continue
+    }
+
+    var eq = line.indexOf("=")
+    if (eq === -1) continue
+    var key = line.slice(0, eq).trim()
+    var value = parseTomlValue(line.slice(eq + 1))
+
+    if (section === "handler.browser" && current) {
+      if (key === "name") current.browser = String(value)
+      else if (key === "profile") current.profile = String(value)
+      continue
+    }
+    if (section === "handler" && current) {
+      if (key === "match") current.match = value
+      else if (key === "match_regex") current.matchRegex = String(value)
+      else if (key === "command") current.command = String(value)
+      else if (key === "browser") current.browser = String(value)
+      else if (key === "rewrite") current.rewrite = String(value)
+      continue
+    }
+    if (section === "" && key === "fallback_browser") out.fallback = String(value)
+  }
+
+  flush()
+  return out
+}
+
+// mclovin writes browser names the way a human types them ("brave"), which is
+// not always the desktop entry id ("brave-browser"). Match on id, then on id
+// prefix, then on display name.
+function resolveBrowserId(browsers, value) {
+  var wanted = String(value || "").trim()
+  if (!wanted) return ""
+  var list = browsers || []
+  var lower = wanted.toLowerCase()
+
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].id).toLowerCase() === lower) return String(list[i].id)
+  }
+  for (var j = 0; j < list.length; j++) {
+    var id = String(list[j].id).toLowerCase()
+    if (id.indexOf(lower) === 0 || lower.indexOf(id) === 0) return String(list[j].id)
+  }
+  for (var k = 0; k < list.length; k++) {
+    if (String(list[k].name).toLowerCase() === lower) return String(list[k].id)
+  }
+  return wanted
+}
+
+// Imported rules resolved against the installed browsers, in file order.
+function resolveImported(imported, browsers) {
+  var out = []
+  var rules = (imported && imported.rules) || []
+  for (var i = 0; i < rules.length; i++) {
+    var r = rules[i]
+    var rule = normalizeRule({
+      match: r.match,
+      matchRegex: r.matchRegex,
+      command: r.command,
+      browser: r.command ? "" : resolveBrowserId(browsers, r.browser),
+      profile: r.profile
+    })
+    if (rule) out.push(rule)
+  }
+  return out
+}
+
+// How many of the CLI's rules the config does not already carry. Compared on
+// the matcher alone: a rule for the same pattern pointing somewhere else is an
+// edit the user made here, not something to re-import.
+function countNewRules(config, imported, browsers) {
+  var current = normalizeConfig(config)
+  var have = {}
+  for (var i = 0; i < current.rules.length; i++) have[ruleLabel(current.rules[i]).toLowerCase()] = true
+
+  var incoming = resolveImported(imported, browsers)
+  var count = 0
+  for (var j = 0; j < incoming.length; j++) {
+    if (!have[ruleLabel(incoming[j]).toLowerCase()]) count++
+  }
+  return count
+}
+
+// Merge an imported rules.toml into an existing config. Imported rules land
+// first and in file order, because mclovin's router is also first-match-wins and
+// the user already ordered them specific-to-general.
+function mergeImported(config, imported, browsers) {
+  var next = normalizeConfig(config)
+  var incoming = resolveImported(imported, browsers)
+
+  var seen = {}
+  for (var j = 0; j < incoming.length; j++) seen[ruleLabel(incoming[j]).toLowerCase()] = true
+
+  var kept = []
+  for (var k = 0; k < next.rules.length; k++) {
+    if (!seen[ruleLabel(next.rules[k]).toLowerCase()]) kept.push(next.rules[k])
+  }
+
+  next.rules = incoming.concat(kept)
+
+  // `fallback_browser` is deliberately NOT imported. In the CLI it is an
+  // emergency backstop used only when the picker cannot open; here it means
+  // "route there instead of asking". Copying the value across would read as
+  // the same setting and silently switch the picker off for every unmatched
+  // link. The shim already covers the CLI's meaning.
+  return next
 }
 
 // ---------------------------------------------------------------------- stats

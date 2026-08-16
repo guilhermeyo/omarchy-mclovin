@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "Router.js" as Router
 
 // Bar icon plus its drop-down. The icon is the whole point of the widget: it
 // goes urgent when mclovin is not the registered http handler, because that is
@@ -27,6 +28,7 @@ Panel {
   readonly property var stats: service ? service.stats : null
   readonly property var rules: service ? service.rules : []
   readonly property int todayCount: stats ? stats.count : 0
+  readonly property int importCount: service ? service.importableCount : 0
   readonly property var breakdown: service && stats
     ? (function() {
         var out = []
@@ -38,15 +40,20 @@ Panel {
     : []
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
 
-  // Unknown reads as fine rather than broken: the handler query has not come
-  // back yet during the first moments of a session.
-  readonly property color barIconColor: (!handlerKnown || isDefault) ? barForeground : root.urgent
+  // Not-the-default is signalled by dimming, the same way the rest of the bar
+  // shows an inactive module. `Color.urgent` is deliberately avoided: themes
+  // that do not define a bar.active token fall back to a fixed red that has
+  // nothing to do with the palette, which looks like a rendering bug rather
+  // than a status. Unknown reads as fine — the handler query has not come back
+  // yet during the first moments of a session.
+  readonly property color barIconColor: (!handlerKnown || isDefault)
+    ? barForeground
+    : Qt.darker(barForeground, 1.55)
   readonly property bool showCount: String(setting("showCount", false)) === "true" || setting("showCount", false) === true
 
   readonly property string statusLine: !handlerKnown
@@ -132,9 +139,17 @@ Panel {
       ActionRow {
         visible: root.handlerKnown && !root.isDefault
         glyph: "󰄬"
-        glyphColor: root.urgent
         label: "Make mclovin the default"
         onActivated: if (root.service) root.service.becomeDefault()
+      }
+
+      // Only offered while there is something to take. Importing is one-shot:
+      // after it runs the count drops to zero unless the CLI's file changes.
+      ActionRow {
+        visible: root.importCount > 0
+        glyph: "󰇚"
+        label: "Import " + root.importCount + " rule" + (root.importCount === 1 ? "" : "s") + " from the mclovin CLI"
+        onActivated: if (root.service) root.service.importFromMclovin()
       }
 
       PanelSeparator { foreground: root.foreground }
@@ -254,7 +269,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: String(modelData.match)
+                text: Router.ruleLabel(modelData)
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -263,7 +278,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: root.service ? root.service.browserName(modelData.browser) : String(modelData.browser)
+                text: root.service ? root.service.targetName(modelData) : Router.ruleTargetLabel(modelData)
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall

@@ -89,6 +89,55 @@ Item {
     function onValuesChanged() { root.refreshBrowsers() }
   }
 
+  // -------------------------------------------------------------- profiles
+
+  // Chromium-family profile directories, keyed by desktop entry id. Read from
+  // each browser's Local State so a rule can name a profile the way the user
+  // sees it in the profile switcher rather than as "Profile 3".
+  property var profilesByBrowser: ({})
+
+  readonly property var localStateTargets: {
+    var out = []
+    for (var i = 0; i < root.browsers.length; i++) {
+      var id = String(root.browsers[i].id)
+      if (!Router.isChromiumFamily(id)) continue
+      var rels = Router.localStateCandidates(id)
+      for (var j = 0; j < rels.length; j++) out.push({ browser: id, path: root.home + "/.config/" + rels[j] })
+    }
+    return out
+  }
+
+  // Candidates are tried in order and the first one holding profiles wins, so a
+  // later empty or missing file must not clear what an earlier one found.
+  function setProfiles(browserId, entries) {
+    if (!entries || entries.length === 0) return
+    var key = String(browserId)
+    var existing = root.profilesByBrowser[key]
+    if (existing && existing.length > 0) return
+    var next = ({})
+    for (var k in root.profilesByBrowser) next[k] = root.profilesByBrowser[k]
+    next[key] = entries
+    root.profilesByBrowser = next
+  }
+
+  function profilesFor(browserId) { return root.profilesByBrowser[String(browserId)] || [] }
+
+  Instantiator {
+    model: root.localStateTargets
+
+    delegate: QtObject {
+      required property var modelData
+
+      property FileView view: FileView {
+        path: modelData.path
+        watchChanges: true
+        printErrors: false
+        onLoaded: root.setProfiles(modelData.browser, Router.parseProfileEntries(text()))
+        onFileChanged: reload()
+      }
+    }
+  }
+
   // -------------------------------------------------------------- routing
 
   // The single entry point for an incoming link. Returns a short status string
@@ -102,15 +151,16 @@ Item {
     var rule = Router.firstMatch(root.rules, parsed)
 
     if (rule) {
-      if (launch(rule.browser, target)) {
-        record(rule.browser, rule.match, target)
+      if (launch(rule, target)) {
+        record(targetName(rule), Router.ruleLabel(rule), target)
         return "routed"
       }
       // The rule names a browser that is no longer installed. Asking beats
       // silently swallowing the click.
     } else if (root.fallbackBrowser) {
-      if (launch(root.fallbackBrowser, target)) {
-        record(root.fallbackBrowser, "", target)
+      var fallback = { browser: root.fallbackBrowser, profile: root.config.fallbackProfile || "" }
+      if (launch(fallback, target)) {
+        record(targetName(fallback), "", target)
         return "routed"
       }
     }
@@ -127,28 +177,54 @@ Item {
 
   // Called by the picker once the user has chosen. Kept here rather than in the
   // overlay so the launch/record/remember sequence has one implementation.
-  function choose(browserId, url, rememberPattern) {
-    if (!launch(browserId, url)) return false
+  function choose(browserId, url, rememberPattern, profile) {
+    var target = { browser: browserId, profile: String(profile || "") }
+    if (!launch(target, url)) return false
     if (rememberPattern) {
-      setConfig(Router.upsertRule(root.config, rememberPattern, browserId))
-      record(browserId, rememberPattern, url)
+      setConfig(Router.upsertRule(root.config, rememberPattern, browserId, target.profile))
+      record(targetName(target), rememberPattern, url)
     } else {
-      record(browserId, "", url)
+      record(targetName(target), "", url)
     }
     return true
   }
 
-  function launch(browserId, url) {
-    var entry = browserById(browserId)
+  // A target is a rule-shaped object: either {command} or {browser, profile}.
+  function launch(target, url) {
+    if (!target) return false
+
+    if (target.command) {
+      var cmdArgv = Router.expandCommand(target.command, url)
+      if (!cmdArgv.length) return false
+      Quickshell.execDetached(cmdArgv)
+      return true
+    }
+
+    var entry = browserById(target.browser)
     if (!entry) return false
     var argv = Router.expandExec(entry.execString, url)
     if (!argv.length) return false
+
+    if (target.profile) {
+      var dir = Router.resolveProfileDirectory(profilesFor(entry.id), target.profile)
+      argv = Router.applyProfile(argv, entry.id, dir)
+    }
+
     Quickshell.execDetached(argv)
     return true
   }
 
-  function record(browserId, ruleLabel, url) {
-    var next = Router.recordRoute(root.stats, today(), browserName(browserId), ruleLabel, url,
+  // What the stats show for a target: the browser's display name, with the
+  // profile when one is pinned, or the bare command for a command rule.
+  function targetName(target) {
+    if (!target) return ""
+    if (target.command) return String(target.command).split(" ")[0]
+    var name = browserName(target.browser)
+    return target.profile ? name + " · " + target.profile : name
+  }
+
+  function record(name, ruleLabel, url) {
+    var next = Router.recordRoute(root.stats, today(), name, ruleLabel, url,
                                   Qt.formatDateTime(new Date(), "yyyy-MM-ddTHH:mm:ss"))
     root.stats = next
     statsFile.setText(JSON.stringify(next, null, 2) + "\n")
@@ -161,12 +237,42 @@ Item {
     configFile.setText(JSON.stringify(root.config, null, 2) + "\n")
   }
 
-  function addRule(match, browserId) { setConfig(Router.upsertRule(root.config, match, browserId)) }
+  function addRule(match, browserId, profile) {
+    setConfig(Router.upsertRule(root.config, match, browserId, profile))
+  }
   function removeRule(index) { setConfig(Router.removeRuleAt(root.config, index)) }
   function setFallback(browserId) {
     var next = Router.normalizeConfig(root.config)
     next.fallback = String(browserId || "")
     setConfig(next)
+  }
+
+  // ------------------------------------------------- import from the CLI
+
+  // The mclovin CLI keeps its rules in TOML at a fixed path. Reading it is a
+  // one-shot import, not a live binding: after importing, this plugin owns its
+  // own config and the CLI can be uninstalled without anything breaking.
+  readonly property string mclovinTomlPath: home + "/.config/mclovin/rules.toml"
+  property var importable: ({ rules: [], fallback: "", skipped: 0 })
+
+  // Only what is not already here, so the offer disappears once taken instead
+  // of sitting in the panel forever inviting a no-op.
+  readonly property int importableCount: Router.countNewRules(root.config, root.importable, root.browsers)
+
+  function importFromMclovin() {
+    var pending = root.importableCount
+    if (pending === 0) return 0
+    setConfig(Router.mergeImported(root.config, root.importable, root.browsers))
+    return pending
+  }
+
+  FileView {
+    path: root.mclovinTomlPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.importable = Router.parseMclovinToml(text())
+    onFileChanged: reload()
+    onLoadFailed: root.importable = ({ rules: [], fallback: "", skipped: 0 })
   }
 
   // ------------------------------------------------- default handler wiring
@@ -313,7 +419,13 @@ Item {
         browsers: root.browsers.length,
         rules: root.rules.length,
         fallback: root.fallbackBrowser,
-        today: root.stats.count
+        today: root.stats.count,
+        importable: root.importableCount,
+        profiles: (function() {
+          var out = {}
+          for (var k in root.profilesByBrowser) out[k] = root.profilesByBrowser[k].length
+          return out
+        })()
       })
     }
 
@@ -321,6 +433,10 @@ Item {
       root.refreshBrowsers()
       root.refreshHandler()
       return "ok"
+    }
+
+    function importRules(): string {
+      return String(root.importFromMclovin())
     }
   }
 
