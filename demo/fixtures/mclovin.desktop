@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=mclovin
+GenericName=Web Browser Picker
+Comment=Choose which browser opens this link
+Exec=/bin/true %u
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+Categories=Network;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;

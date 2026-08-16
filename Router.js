@@ -79,9 +79,18 @@ function isWhen(value) {
     || value === WHEN_HOST || value === WHEN_REGEX
 }
 
+// A rule's terms reach here as a real JS array from the config parse, but as an
+// array-LIKE QVariantList once the same object has crossed into QML and back
+// through a Repeater's modelData. Array.isArray() says false for the second
+// shape and String() flattens it to "a,b", which silently turned a two-term
+// rule into one term that could never match. Normalize by shape, not by type.
 function termList(terms) {
   var out = []
-  var list = Array.isArray(terms) ? terms : [terms]
+  var list
+  if (Array.isArray(terms)) list = terms
+  else if (terms && typeof terms === "object" && typeof terms.length === "number") list = terms
+  else list = [terms]
+
   for (var i = 0; i < list.length; i++) {
     var v = String(list[i] === undefined || list[i] === null ? "" : list[i]).trim()
     if (v) out.push(v)

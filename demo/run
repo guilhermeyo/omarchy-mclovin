@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# Run the plugin against invented browsers, profiles, and rules on an empty
+# workspace, and optionally photograph it.
+#
+# Nothing of yours is edited. The lever is HOME: every source this plugin reads
+# — its config, its stats, and each browser's profile store — hangs off it, so
+# pointing the shell at a throwaway HOME swaps all of them at once and leaves
+# ~/.config/omarchy-mclovin untouched on disk.
+#
+# The real shell is stopped for the duration and restored on exit, including
+# when you interrupt it. Same shape as 37signals/omarchy-basecamp-plugin's
+# demo/run, which is where the approach comes from.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixtures="$repo_root/demo/fixtures"
+plugin_id="io.github.guilhermeyo.mclovin"
+omarchy_path="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
+real_home="$HOME"
+
+demo_home=""
+demo_shell_pid=""
+original_workspace=""
+workspace_changed=0
+shell_stopped=0
+cleanup_done=0
+capture=0
+outdir="$repo_root/demo/shots"
+
+usage() {
+  cat <<'USAGE'
+Usage: ./demo/run [--screenshot] [--outdir PATH]
+
+Starts a throwaway shell showing invented browsers, profiles, and rules on an
+empty workspace, so the plugin can be photographed without any of your own
+browsers, profiles, or links in frame.
+
+  --screenshot     Capture bar, drop-down, picker, and rule form, then exit.
+  --outdir PATH    Where the captures go. Default: demo/shots.
+  -h, --help       Show this help.
+
+Your shell, workspace, and configuration are restored on exit.
+USAGE
+}
+
+while (( $# > 0 )); do
+  case $1 in
+    --screenshot) capture=1 ;;
+    --outdir) shift; [[ $# -gt 0 ]] || { echo "--outdir needs a path" >&2; exit 2; }; outdir=$1; capture=1 ;;
+    --outdir=*) outdir=${1#--outdir=}; capture=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "$runtime_dir/hypr" 2>/dev/null | head -n1)
+  export HYPRLAND_INSTANCE_SIGNATURE
+fi
+
+for cmd in grim hyprctl jq omarchy-launch-shell omarchy-restart-shell omarchy-shell quickshell; do
+  command -v "$cmd" >/dev/null || { echo "Missing required command: $cmd" >&2; exit 1; }
+done
+
+# Hyprland here takes Lua dispatchers; `hyprctl dispatch workspace N` is rejected.
+focus_workspace() {
+  hyprctl dispatch "hl.dsp.focus({ workspace = \"$1\" })" >/dev/null 2>&1
+}
+
+# ------------------------------------------------------------------ teardown
+
+cleanup() {
+  if (( cleanup_done )); then return 0; fi
+  cleanup_done=1
+
+  if [[ -n $demo_shell_pid ]]; then kill "$demo_shell_pid" 2>/dev/null || true; fi
+  sleep 1
+  pkill -f "quickshell.*$demo_home" 2>/dev/null || true
+
+  if (( workspace_changed )) && [[ -n $original_workspace ]]; then
+    focus_workspace "$original_workspace" || true
+  fi
+
+  if (( shell_stopped )); then
+    HOME=$real_home omarchy-restart-shell >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n $demo_home && -d $demo_home ]]; then rm -rf "$demo_home"; fi
+  echo "Restored." >&2
+  return 0
+}
+trap cleanup EXIT INT TERM
+
+# ------------------------------------------------------------ the fake HOME
+
+demo_home=$(mktemp -d /tmp/omarchy-mclovin-demo.XXXXXX)
+
+mkdir -p \
+  "$demo_home/.config/omarchy/plugins/$plugin_id" \
+  "$demo_home/.config/omarchy-mclovin" \
+  "$demo_home/.cache/omarchy-mclovin" \
+  "$demo_home/.local/state/omarchy/current" \
+  "$demo_home/.local/share/applications" \
+  "$demo_home/.config/chromium" \
+  "$demo_home/.config/google-chrome" \
+  "$demo_home/.config/BraveSoftware/Brave-Browser" \
+  "$demo_home/.config/mozilla/firefox"
+
+# A copy, not a symlink: `omarchy plugin validate` rejects symlinks inside a
+# plugin folder, and the demo should exercise what a real install looks like.
+tar -C "$repo_root" --exclude=.git --exclude=demo -cf - . \
+  | tar -C "$demo_home/.config/omarchy/plugins/$plugin_id" -xf -
+
+cp "$fixtures/shell.json"  "$demo_home/.config/omarchy/shell.json"
+cp "$fixtures/config.json" "$demo_home/.config/omarchy-mclovin/config.json"
+cp "$fixtures/stats.json"  "$demo_home/.cache/omarchy-mclovin/stats.json"
+
+# Invented profiles. Real browsers still come from /usr/share/applications, so
+# the icons are the genuine ones — it is only the profile names that are made up.
+cp "$fixtures/browsers/chromium-Local-State.json"      "$demo_home/.config/chromium/Local State"
+cp "$fixtures/browsers/google-chrome-Local-State.json" "$demo_home/.config/google-chrome/Local State"
+cp "$fixtures/browsers/brave-Local-State.json"         "$demo_home/.config/BraveSoftware/Brave-Browser/Local State"
+cp "$fixtures/browsers/firefox-profiles.ini"           "$demo_home/.config/mozilla/firefox/profiles.ini"
+
+# xdg-mime reads $XDG_CONFIG_HOME/mimeapps.list, so the demo can present itself
+# as the registered handler without touching the real one.
+cp "$fixtures/mclovin.desktop" "$demo_home/.local/share/applications/$plugin_id.desktop"
+cat > "$demo_home/.config/mimeapps.list" <<MIMEAPPS
+[Default Applications]
+x-scheme-handler/http=$plugin_id.desktop
+x-scheme-handler/https=$plugin_id.desktop
+MIMEAPPS
+
+# The shell needs a theme to colour itself with; borrow whichever one is active
+# so the shot matches the desktop it was taken on.
+if [[ -d $real_home/.local/state/omarchy/current/theme ]]; then
+  cp -rL "$real_home/.local/state/omarchy/current/theme" "$demo_home/.local/state/omarchy/current/theme"
+fi
+
+# ------------------------------------------------------------ empty workspace
+
+monitor=$(hyprctl monitors -j | jq -c '([.[] | select(.focused)][0] // .[0])')
+monitor_name=$(jq -r '.name' <<<"$monitor")
+original_workspace=$(jq -r '.activeWorkspace.id' <<<"$monitor")
+
+used=" $(hyprctl clients -j | jq -r '.[].workspace.id' | tr '\n' ' ') "
+demo_workspace=""
+for candidate in 7 8 9 10 11 12 13 14 15; do
+  [[ $used != *" $candidate "* ]] && { demo_workspace=$candidate; break; }
+done
+[[ -n $demo_workspace ]] || { echo "No empty workspace to use." >&2; exit 1; }
+
+focus_workspace "$demo_workspace"
+workspace_changed=1
+
+# --------------------------------------------------------------- demo shell
+
+pkill -f "quickshell.*$omarchy_path/shell" 2>/dev/null || true
+shell_stopped=1
+sleep 1
+
+HOME="$demo_home" \
+XDG_CONFIG_HOME="$demo_home/.config" \
+XDG_CACHE_HOME="$demo_home/.cache" \
+XDG_STATE_HOME="$demo_home/.local/state" \
+OMARCHY_PATH="$omarchy_path" \
+QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
+  quickshell -n -p "$omarchy_path/shell" >/dev/null 2>&1 &
+demo_shell_pid=$!
+
+for _ in $(seq 1 40); do
+  sleep 0.5
+  HOME="$demo_home" omarchy-shell shell ping >/dev/null 2>&1 && break
+done
+
+HOME="$demo_home" omarchy-shell shell ping >/dev/null 2>&1 \
+  || { echo "The demo shell did not come up." >&2; exit 1; }
+
+sleep 2
+status=$(HOME="$demo_home" omarchy-shell "$plugin_id" status 2>/dev/null || echo '{}')
+echo "Demo shell ready: $(jq -c '{rules, browsers, profiles}' <<<"$status")" >&2
+
+if (( ! capture )); then
+  echo "Press Enter to tear the demo down." >&2
+  read -r _ || true
+  exit 0
+fi
+
+# ------------------------------------------------------------------ captures
+
+mkdir -p "$outdir"
+shot() { grim -o "$monitor_name" "$outdir/$1"; }
+
+# Park the pointer off the captured output so it cannot land in a shot.
+hyprctl dispatch "hl.dsp.movecursor({ x = 1, y = 2158 })" >/dev/null 2>&1 || true
+
+HOME="$demo_home" omarchy-shell "$plugin_id" togglePanel >/dev/null
+sleep 2
+shot panel.png
+HOME="$demo_home" omarchy-shell "$plugin_id" hidePanel >/dev/null
+sleep 1
+
+HOME="$demo_home" omarchy-shell "$plugin_id" open "https://example.com/report" >/dev/null
+sleep 2
+shot picker.png
+HOME="$demo_home" omarchy-shell shell hide "$plugin_id" >/dev/null
+sleep 1
+
+HOME="$demo_home" omarchy-shell shell summon "$plugin_id" \
+  '{"mode":"editor","ruleIndex":-1,"url":"https://mail.example.com/inbox"}' >/dev/null
+sleep 2
+shot form.png
+HOME="$demo_home" omarchy-shell shell hide "$plugin_id" >/dev/null
+sleep 1
+
+shot bar.png
+
+echo "Captured into $outdir" >&2

@@ -2,17 +2,28 @@
 
 Choose which browser opens every link.
 
-When you click a link, mclovin pops a picker in the middle of the screen listing
-the browsers you actually have installed. Pick one and the link opens there. Tick
-"always use this browser" and the choice becomes a rule, so the next link to that
-host skips the picker entirely.
+![The mclovin bar widget, showing four routing rules](preview.png)
 
-A bar widget shows whether mclovin is handling links, what it routed today, and
-the rules you have built up.
+Click a link and mclovin puts a picker in the middle of the screen listing the
+browsers you have installed — one row per profile, so "Chromium · Work" and
+"Chromium · Personal" are separate choices. Pick one and the link opens there.
+Tick *always use this browser* and the choice becomes a rule, so the next link
+to that host skips the picker.
+
+Rules are written in a form, not a config file: say whether a link **starts
+with**, **contains**, or **is on** something, choose a browser and profile, and
+watch the preview tell you what it would catch before you save it. When two
+rules could take the same link the narrower one wins, so there is no ordering to
+maintain.
+
+<p align="center">
+  <img src="preview-picker.png" width="46%" alt="The browser picker, listing four browsers with their profiles">
+  <img src="preview-form.png" width="52%" alt="The rule form, with matcher, destination, and a live preview">
+</p>
 
 Everything runs inside `omarchy-shell` as QML. There is no daemon, no compiled
 binary, and no dependency on the [mclovin CLI](https://github.com/guilhermeyo/mclovin)
-that shares the name.
+that shares the name — though it can import that CLI's rules if you have them.
 
 ## Requirements
 

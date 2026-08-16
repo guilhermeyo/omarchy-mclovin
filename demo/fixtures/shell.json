@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "bar": {
+    "id": "omarchy.bar",
+    "position": "top",
+    "centerAnchor": "omarchy.clock",
+    "layout": {
+      "left": [],
+      "center": [{ "id": "omarchy.clock", "format": "dddd HH:mm" }],
+      "right": [{ "id": "io.github.guilhermeyo.mclovin" }]
+    }
+  },
+  "disabledPlugins": ["omarchy.background", "omarchy.notifications", "omarchy.osd", "omarchy.system-update"],
+  "plugins": []
+}
