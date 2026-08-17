@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import "Router.js" as Router
 import "Browsers.js" as Browsers
@@ -320,6 +321,7 @@ Item {
         root.lastError = "The command “" + target.command + "” is empty"
         return false
       }
+      root.lastLaunch = { command: target.command, argv: cmdArgv }
       Quickshell.execDetached(cmdArgv)
       return true
     }
@@ -346,14 +348,18 @@ Item {
     // already has a window, going there is the answer; a second window is not.
     // A private pick always opens: the point of it is a fresh private window.
     if (!String(url || "") && target.private !== true) {
-      windowScan.pendingArgv = argv
-      windowScan.pendingBrowser = entry.id
-      windowScan.pendingProfile = target.profile
-      windowScan.pendingProfileCount = profilesFor(entry.id).length
-      windowScan.pendingRecord = { browser: entry.id, profile: target.profile,
-                                   directory: dir, private: false, argv: argv }
-      windowScan.running = true
-      return true
+      var existing = Browsers.findProfileToplevel(
+        ToplevelManager.toplevels.values, entry.id, target.profile,
+        profilesFor(entry.id).length)
+
+      if (existing) {
+        root.lastLaunch = { browser: entry.id, profile: target.profile, directory: dir,
+                            private: false, focused: String(existing.title || "") }
+        focusDelay.toplevel = existing
+        focusDelay.fallbackArgv = argv
+        focusDelay.restart()
+        return true
+      }
     }
 
     root.lastLaunch = { browser: entry.id, profile: target.profile,
@@ -362,54 +368,24 @@ Item {
     return true
   }
 
-  // Asking the compositor is asynchronous, so the decision lands here rather
-  // than inside launch(). By then the picker has already closed, which is
-  // correct either way: the pick was accepted.
-  Process {
-    id: windowScan
-    property var pendingArgv: []
-    property string pendingBrowser: ""
-    property string pendingProfile: ""
-    property int pendingProfileCount: 0
-    property var pendingRecord: null
-
-    command: ["hyprctl", "-j", "clients"]
-    stdout: StdioCollector {
-      onStreamFinished: root.focusOrLaunch(text)
-    }
-  }
-
+  // Deliberately late: the overlay is a layer surface holding exclusive
+  // keyboard focus and is dismissed on the same tick this decision is made.
+  // Raising the browser before that surface is gone gets undone when the
+  // compositor hands focus back to whatever was underneath.
+  //
+  // Last pick wins if two land inside the window, which is what picking twice
+  // means. A window closed in the meantime is gone from QML by then, and
+  // launching beats raising nothing.
   Timer {
     id: focusDelay
-    property string address: ""
+    property var toplevel: null
+    property var fallbackArgv: []
     interval: 220
-    onTriggered: Quickshell.execDetached(["hyprctl", "dispatch",
-      "hl.dsp.focus({ window = \"address:" + address + "\" })"])
-  }
-
-  function focusOrLaunch(clientsJson) {
-    var clients = []
-    try { clients = JSON.parse(clientsJson) } catch (e) { clients = [] }
-
-    var address = Browsers.findProfileWindow(clients, windowScan.pendingBrowser,
-                                             windowScan.pendingProfile,
-                                             windowScan.pendingProfileCount)
-    var record = windowScan.pendingRecord || {}
-
-    if (address) {
-      record.focused = address
-      root.lastLaunch = record
-      // Not immediate: the overlay is a layer surface holding exclusive
-      // keyboard focus and is dismissed on the same tick this decision starts.
-      // Focusing the browser before that surface is gone gets undone when the
-      // compositor hands focus back to whatever was under it.
-      focusDelay.address = address
-      focusDelay.restart()
-      return
+    onTriggered: {
+      if (toplevel) toplevel.activate()
+      else if (fallbackArgv.length) Quickshell.execDetached(fallbackArgv)
+      toplevel = null
     }
-
-    root.lastLaunch = record
-    Quickshell.execDetached(windowScan.pendingArgv)
   }
 
   function supportsPrivate(browserId) {

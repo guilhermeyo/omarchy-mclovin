@@ -395,6 +395,31 @@ rm ~/.local/share/applications/io.github.guilhermeyo.mclovin.desktop
 
 Your rules in `~/.config/omarchy-mclovin/` are left alone.
 
+## Going to a browser that is already open
+
+Picking a browser with no link in hand means "take me there". If that browser
+and profile already has an ordinary window, mclovin raises it instead of
+stacking a second one on top. Picking privately always opens: a fresh private
+window is the point of asking.
+
+Windows come from the Wayland foreign-toplevel protocol, not from asking the
+compositor, so this needs no `hyprctl` and works the same wherever the shell
+runs. A `--app=` window reports an id like `brave-web.whatsapp.com__-Default`,
+and that marker is what keeps a webapp from ever counting as the browser being
+open.
+
+Two limits worth stating plainly, because both fail towards opening a window
+rather than towards the wrong one:
+
+- **Chromium-family windows do not say which profile they show.** With one
+  profile every ordinary window is that profile and raising it is safe. With
+  several there is nothing to match on, so mclovin launches instead of
+  guessing. An incognito window is likewise indistinguishable from an ordinary
+  one, so on a single-profile browser it can be the window that gets raised.
+- **Firefox does say**, in its title, so its profiles are told apart — and a
+  private window is skipped, in any language, by requiring the brand segment to
+  be exactly "Mozilla Firefox" rather than matching English wording.
+
 ## Notes
 
 - The picker lists every installed application that declares the `WebBrowser`

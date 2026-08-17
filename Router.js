@@ -111,17 +111,24 @@ function isWhen(value) {
     || value === WHEN_HOST || value === WHEN_REGEX
 }
 
-// A rule's terms reach here as a real JS array from the config parse, but as an
-// array-LIKE QVariantList once the same object has crossed into QML and back
-// through a Repeater's modelData. Array.isArray() says false for the second
-// shape and String() flattens it to "a,b", which silently turned a two-term
-// rule into one term that could never match. Normalize by shape, not by type.
+// A list that came from the config parse is a real JS array. The same list read
+// back after it has crossed into QML is array-LIKE: it indexes and has .length,
+// but Array.isArray() says false and String() flattens it to "a,b". Every place
+// that asks "is this a list?" has to ask by shape, because the answer by type
+// depends on which side of the boundary the value last touched.
+//
+// This has bitten three times: desktop entry categories, and rule terms, where
+// a two-term rule silently became one term with a comma in it and matched
+// nothing. The two callers below are worse — see their own comments.
+function asArray(value) {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === "object" && typeof value.length === "number") return value
+  return null
+}
+
 function termList(terms) {
   var out = []
-  var list
-  if (Array.isArray(terms)) list = terms
-  else if (terms && typeof terms === "object" && typeof terms.length === "number") list = terms
-  else list = [terms]
+  var list = asArray(terms) || [terms]
 
   for (var i = 0; i < list.length; i++) {
     var v = String(list[i] === undefined || list[i] === null ? "" : list[i]).trim()
@@ -339,9 +346,12 @@ function sortBySpecificity(rules) {
 // taking the first match *is* "most specific wins", and the file on disk reads
 // in the same order the panel shows.
 function firstMatch(rules, parsed) {
-  if (!Array.isArray(rules)) return null
-  for (var i = 0; i < rules.length; i++) {
-    if (ruleMatches(rules[i], parsed)) return rules[i]
+  // By shape: `rules` arrives straight off a QML property, so a type check here
+  // would answer "not a list" and route every single link to the picker.
+  var list = asArray(rules)
+  if (!list) return null
+  for (var i = 0; i < list.length; i++) {
+    if (ruleMatches(list[i], parsed)) return list[i]
   }
   return null
 }
@@ -353,7 +363,11 @@ function normalizeConfig(raw) {
   }
   if (!parsed || typeof parsed !== "object") parsed = {}
 
-  var rules = Array.isArray(parsed.rules) ? parsed.rules : []
+  // By shape, and this one is the dangerous one: normalizeConfig is called with
+  // the live config object from six places before writing it back to disk. A
+  // type check that answered "not a list" would replace every rule with nothing
+  // and then save that.
+  var rules = asArray(parsed.rules) || []
   var clean = []
   for (var i = 0; i < rules.length; i++) {
     var r = normalizeRule(rules[i])

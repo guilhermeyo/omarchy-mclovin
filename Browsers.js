@@ -328,11 +328,16 @@ function launchArgs(browserId, execString, url, profileDirectory, wantPrivate) {
 // open, which it is not.
 function isAppWindowClass(cls) { return String(cls || "").indexOf("__-") !== -1 }
 
+// Exact, not prefixed. "google-chrome".indexOf("google-chrome-beta") style
+// matching makes stable Chrome and Chrome Beta each other's windows, so asking
+// for one silently gets you the other; the same for firefox against
+// firefox-esr. A browser whose window id genuinely differs from its desktop id
+// simply falls through to launching, which is the harmless direction.
 function isOrdinaryWindowOf(cls, browserId) {
   var c = String(cls || "").toLowerCase()
   var id = String(browserId || "").toLowerCase()
   if (!c || !id || isAppWindowClass(c)) return false
-  return c === id || c.indexOf(id) === 0 || id.indexOf(c) === 0
+  return c === id
 }
 
 // Firefox writes the profile into the window title — "… — Personal — Mozilla
@@ -344,37 +349,59 @@ function isOrdinaryWindowOf(cls, browserId) {
 // nothing simply falls through to launching, which is what happened before.
 // Firefox titles read "<page> — <profile> — Mozilla Firefox", and drop the page
 // when there is not one yet: "<profile> — Mozilla Firefox". So the profile is
-// whatever sits immediately before the Mozilla segment, not a fixed position.
-// A private window appends " Private Browsing" to that segment and is never a
-// place to send an ordinary request.
+// whatever sits immediately before the brand segment, not a fixed position.
+//
+// A private window extends that segment — "Mozilla Firefox Private Browsing" in
+// English, "Mozilla Firefox (Navegação privativa)" in pt-BR. Rather than match
+// the English wording, require the brand segment to be *exactly* the brand:
+// anything longer is some mode, and no mode is a place to send an ordinary
+// request. Returns "" for those, and for anything that is not Firefox at all.
 function geckoTitleProfile(title) {
   var parts = String(title || "").split(" — ")
   for (var i = parts.length - 1; i >= 0; i--) {
     if (parts[i].indexOf("Mozilla Firefox") !== 0) continue
-    if (parts[i].indexOf("Private Browsing") !== -1) return ""
+    if (parts[i] !== "Mozilla Firefox") return ""
     return i > 0 ? parts[i - 1] : ""
   }
   return ""
 }
 
-function findProfileWindow(clients, browserId, profileName, profileCount) {
-  var list = clients || []
+// Given the compositor's list of open windows, the one that already belongs to
+// this browser and profile, or null. Wayland toplevels rather than a compositor
+// query: `appId`, `title` and `activate()` come from the foreign-toplevel
+// protocol, so this needs no hyprctl, no JSON, no dispatcher dialect, and no
+// round trip — the answer is available at the moment the choice is made.
+function findProfileToplevel(toplevels, browserId, profileName, profileCount) {
+  var list = toplevels || []
   var gecko = isFirefoxFamily(browserId)
   var wanted = String(profileName || "")
+  var first = null
 
   for (var i = 0; i < list.length; i++) {
-    var client = list[i]
-    if (!client || !isOrdinaryWindowOf(client["class"], browserId)) continue
+    var top = list[i]
+    if (!top || !isOrdinaryWindowOf(top.appId, browserId)) continue
 
     if (gecko) {
-      if (!wanted) return String(client.address || "")
-      if (geckoTitleProfile(client.title) === wanted) return String(client.address || "")
+      // Evaluated for every candidate, including when no profile is pinned:
+      // a stock Firefox reports no profiles at all, and skipping the check in
+      // that case is exactly how a Private Browsing window gets focused for an
+      // ordinary request.
+      var found = geckoTitleProfile(top.title)
+      if (!found) continue
+      if (wanted && found !== wanted) continue
+    } else if (wanted && Number(profileCount) > 1) {
+      // Chromium-family windows report the same appId and title shape whatever
+      // profile they show, so with several profiles there is nothing to match
+      // on and launching beats focusing the wrong one.
       continue
     }
 
-    if (!wanted || Number(profileCount) <= 1) return String(client.address || "")
+    // The protocol carries no focus history, so "most recently used" is not
+    // answerable. The window the compositor has active is the one case that is.
+    if (top.activated) return top
+    if (!first) first = top
   }
-  return ""
+  return first
 }
 
 // ------------------------------------------------------------------- browsers
