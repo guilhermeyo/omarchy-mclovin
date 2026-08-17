@@ -471,7 +471,7 @@ function pickerEntries(browsers, profilesByBrowser) {
 }
 
 // Filter across the browser name, the profile name, and the desktop id, so
-// typing "invoice" finds the Chromium profile and typing "brave" finds Brave.
+// typing "design" finds the Chrome profile and typing "brave" finds Brave.
 function filterPickerEntries(entries, query) {
   var q = String(query || "").trim().toLowerCase()
   if (!q) return entries || []

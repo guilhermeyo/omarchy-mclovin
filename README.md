@@ -56,9 +56,8 @@ profiles are three rows, and a browser with no profiles is a single row. Picking
 which is not a choice.
 
 ```
- Brave            44
+ Brave            Default
  Chromium         Work
- Chromium         Design
  Firefox          Personal
  Google Chrome    Design
 ```
@@ -73,7 +72,7 @@ which is not a choice.
 | `Ctrl+R` | toggle "always use <browser · profile> for <host>" |
 | `Esc` | clear the filter, then cancel |
 
-Typing `sico` finds the Chromium profile named "Design". Cancelling
+Typing `des` finds the Google Chrome profile named "Design". Cancelling
 drops the link — nothing opens.
 
 **Turning a link into a rule, without leaving the picker.** Under the list sit
@@ -215,7 +214,7 @@ the length of the text it constrains, with a point of credit for being anchored:
 | `Contains` | length of the text |
 | `Regex` | its literal characters only — metacharacters describe what a pattern *accepts*, not what it pins down |
 
-So `Contains github.com/acme` (24) beats `Contains github.com` (10)
+So `Contains github.com/acme` (15) beats `Contains github.com` (10)
 without anyone dragging anything, which is the case that actually comes up.
 
 Ranking by matcher kind instead would get that backwards: `Host is github.com`
@@ -248,7 +247,7 @@ editing it by hand still works — the plugin watches it and reloads.
   "rules": [
     { "when": "startsWith", "terms": ["github.com/acme"], "browser": "chromium", "profile": "Work" },
     { "when": "host", "terms": ["example.com", "example.org"], "browser": "firefox" },
-    { "when": "contains", "terms": ["zoom.us"], "command": "brave {url}" },
+    { "when": "contains", "terms": ["zoom.us"], "command": "zoom {url}" },
     { "when": "host", "terms": ["hedge.example"], "browser": "firefox", "profile": "Personal", "private": true },
     { "when": "regex", "terms": ["^https?://(\\w+)\\.internal\\."], "browser": "chromium" }
   ]
@@ -318,7 +317,6 @@ to the icon. Set it in `~/.config/omarchy/shell.json` on the widget's entry.
 
 ## IPC
 
-```bash
 One target, named after the plugin id.
 
 ```bash

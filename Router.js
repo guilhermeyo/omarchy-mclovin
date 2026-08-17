@@ -279,7 +279,7 @@ function winningRuleIndex(rules, url) {
 // The measure is how much of the URL a rule pins down, which is essentially the
 // length of the text it constrains. Ranking by matcher kind instead would be
 // wrong in the common case: `Host is github.com` constrains ten characters,
-// while `Contains github.com/acme` constrains twenty-four and is
+// while `Contains github.com/acme` constrains fifteen and is
 // obviously the narrower rule.
 //
 //   host        length of the host, +1 because it is an exact match rather

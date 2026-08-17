@@ -4,3 +4,6 @@
 
 # Demo captures — the previews at the repo root are the artifacts
 demo/shots/
+
+# internal session notes, not plugin docs
+docs/
