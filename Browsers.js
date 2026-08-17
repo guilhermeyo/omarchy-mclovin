@@ -295,15 +295,12 @@ function launchArgs(browserId, execString, url, profileDirectory, wantPrivate) {
     if (flag) flags.push(flag)
   }
 
-  // "Open a browser" with no link in hand has to produce a window. Handed a
-  // bare invocation, an already-running Chromium may simply focus whatever
-  // window that profile has — and if that window sits on another workspace,
-  // asking for a browser looks like nothing happening at all. With a URL this
-  // is not wanted: a link joining an existing window as a tab is correct.
-  if (!String(url || "") && (isChromiumFamily(browserId) || isFirefoxFamily(browserId))) {
-    flags.push("--new-window")
-  }
-
+  // No --new-window. Asking for a profile that is already open should land on
+  // the window that is already open, and the browser is the only thing that
+  // knows which window belongs to which profile: a normal Chromium window
+  // reports the same app id whatever profile it is showing, so the compositor
+  // cannot be asked to focus "the one for profile 44". Forcing a new window
+  // here took that decision away from the only component able to make it.
   if (flags.length === 0) return argv
 
   return [argv[0]].concat(flags, argv.slice(1))
