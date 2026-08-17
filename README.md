@@ -363,19 +363,28 @@ first installed browser it finds. A link is never silently swallowed.
 
 ### Webapps
 
-`omarchy-launch-webapp` calls the default browser as `<browser> --app=URL`, and
-it only does that for browsers on a hard-coded whitelist — anything else it
-replaces with `chromium.desktop`. mclovin's id is not on that list, so **webapps
-open in Chromium unless you widen it**:
+`omarchy-launch-webapp` calls the default browser as `<browser> --app=URL`, but
+only for browsers on a hard-coded whitelist — anything else it silently replaces
+with `chromium.desktop`. mclovin's id is not on that list.
 
-```bash
-sudo sed -i 's/| mclovin\*)/| mclovin* | io.github.guilhermeyo.mclovin*)/' \
-  "$(command -v omarchy-launch-webapp)"
+So installing mclovin and making it the default moves your webapps to Chromium,
+even though nothing about your webapps changed. That is worth knowing before you
+switch: it is the one thing this plugin quietly takes away.
+
+mclovin does not edit that file, and this repository ships nothing that would.
+If you want your webapps back where they were, the whitelist is one line in
+`$(command -v omarchy-launch-webapp)`:
+
+```
+google-chrome* | brave* | microsoft-edge* | opera* | vivaldi* | helium*) ;;
 ```
 
-The shim recognises `--app=` and hands it straight to the `webapp` browser from
-your config without going near the picker. Note that an `omarchy update` will
-restore the original whitelist.
+Add `| io.github.guilhermeyo.mclovin*` before the `)` and webapps go through
+mclovin, which sends them to the `webapp` browser from your config without ever
+showing the picker. Two caveats: whether you can write that file depends on how
+Omarchy was installed — a checkout under `$HOME` is yours to edit, a packaged
+one under `/usr` is not — and `omarchy update` restores the original line either
+way, so treat it as a local preference rather than a setup step.
 
 ## Uninstall
 
