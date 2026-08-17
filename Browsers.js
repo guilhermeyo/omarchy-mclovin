@@ -294,6 +294,16 @@ function launchArgs(browserId, execString, url, profileDirectory, wantPrivate) {
     var flag = privateFlag(browserId)
     if (flag) flags.push(flag)
   }
+
+  // "Open a browser" with no link in hand has to produce a window. Handed a
+  // bare invocation, an already-running Chromium may simply focus whatever
+  // window that profile has — and if that window sits on another workspace,
+  // asking for a browser looks like nothing happening at all. With a URL this
+  // is not wanted: a link joining an existing window as a tab is correct.
+  if (!String(url || "") && (isChromiumFamily(browserId) || isFirefoxFamily(browserId))) {
+    flags.push("--new-window")
+  }
+
   if (flags.length === 0) return argv
 
   return [argv[0]].concat(flags, argv.slice(1))
