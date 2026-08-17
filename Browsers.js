@@ -46,10 +46,12 @@ function expandExec(execString, url) {
   var tokens = tokenizeExec(execString)
   var out = []
   var target = String(url || "")
+  var urlSeen = false
 
   for (var i = 0; i < tokens.length; i++) {
     var t = tokens[i]
     if (t === "%u" || t === "%U" || t === "%f" || t === "%F") {
+      urlSeen = true
       if (target) out.push(target)
       continue
     }
@@ -57,11 +59,18 @@ function expandExec(execString, url) {
         || t === "%n" || t === "%N" || t === "%v" || t === "%m") continue
     // A code glued to other text (Exec=foo --url=%u) still has to lose the code.
     if (t.indexOf("%") !== -1) {
+      if (/%[uUfF]/.test(t)) urlSeen = true
       t = t.replace(/%[uUfF]/g, target).replace(/%[a-zA-Z]/g, "")
       if (!t) continue
     }
     out.push(t)
   }
+
+  // A desktop entry with no placeholder at all still has to receive the link.
+  // Matches parse_exec_field in the mclovin CLI, which appends it rather than
+  // dropping it on the floor.
+  if (!urlSeen && target) out.push(target)
+
   return out
 }
 
