@@ -138,6 +138,7 @@ Panel {
     // Names the rule rather than asking "are you sure?", because the question
     // worth answering is whether this is the one you meant.
     ConfirmDialog {
+      id: deleteConfirm
       anchors.fill: parent
       z: 10
       opened: root.pendingDelete >= 0
@@ -148,6 +149,15 @@ Panel {
       background: Color.popups.background
       foreground: root.foreground
       fontFamily: root.fontFamily
+      // Cancel is the default answer. The component ships with the destructive
+      // button preselected, which paints it red and makes it read as the one to
+      // press — the opposite of what a confirmation is for when the thing at
+      // stake is a rule the user wrote by hand.
+      onOpenedChanged: if (opened) selectedIndex = 0
+      focus: root.pendingDelete >= 0
+      Keys.onPressed: function(event) {
+        if (deleteConfirm.handleKey(event)) event.accepted = true
+      }
       onCanceled: root.pendingDelete = -1
       onConfirmed: {
         if (root.service) root.service.removeRule(root.pendingDelete)
