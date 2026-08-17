@@ -123,7 +123,8 @@ Firefox profile rows and nothing else.
 
 **Rules.** Ticking the remember box in the picker writes a rule for that host.
 Everything else happens in the rule form, which is the bar widget's drop-down →
-**Add rule**, or clicking any rule in the list to edit it.
+**Add rule**, or the pencil on any rule in the list — the row itself opens it
+too. The × next to it asks first, naming the rule in the question.
 
 ## Private windows
 
