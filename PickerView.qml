@@ -101,14 +101,16 @@ Item {
     return where + " · " + whenWord(root.rememberWhen)
   }
 
-  function reset(nextUrl) {
+  function reset(nextUrl, startPrivate) {
     root.url = String(nextUrl || "")
     root.filterText = ""
     root.selectedIndex = 0
     // Both reset every time. A sticky toggle would quietly write a rule, or
     // quietly stop writing one, on the next unrelated link.
     root.remember = false
-    root.wantPrivate = false
+    // Armed only when the caller asked for private explicitly, which is the
+    // one case where carrying it in is what was meant.
+    root.wantPrivate = startPrivate === true
     root.rememberWhen = Router.WHEN_HOST
     root.rememberTerm = root.host
     root.errorText = ""

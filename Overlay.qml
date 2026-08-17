@@ -49,7 +49,7 @@ Item {
       form.load(root.ruleIndex, root.url)
       Qt.callLater(function() { form.takeFocus() })
     } else {
-      picker.reset(root.url)
+      picker.reset(root.url, payload.private === true)
       Qt.callLater(function() { picker.takeFocus() })
     }
   }

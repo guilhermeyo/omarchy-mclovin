@@ -13,10 +13,54 @@
 
 set -eu
 
-url=${1:-}
-[ -n "$url" ] || exit 0
-
 config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mclovin/config.json"
+
+usage() {
+  cat <<'USAGE'
+mclovin — choose which browser opens a link.
+
+Usage: mclovin-open [URL]
+       mclovin-open --app=URL
+       mclovin-open --incognito [URL]
+
+With no URL it opens the picker so you can just pick a browser. Registered as
+the system http/https handler by the mclovin Omarchy plugin.
+USAGE
+}
+
+# This stands in for a browser, so it is called the way a browser is, and that
+# is not always with a URL. `omarchy-launch-browser` probes the default browser
+# with `--help` to sniff out Firefox before launching it with no arguments at
+# all. Treating either as a link put "--help" on the browser's command line,
+# where it prints usage and exits — the reported "I pick a browser and nothing
+# opens", for every browser rather than one.
+url=""
+want_private=0
+
+for argument in "$@"; do
+  case $argument in
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --app=*)
+      # Handled below, where the webapp browser is resolved.
+      url=$argument
+      break
+      ;;
+    # omarchy-launch-browser rewrites its own --private into whichever flag the
+    # detected browser wants, so accept the whole family.
+    --private|--incognito|--private-window|--inprivate)
+      want_private=1
+      ;;
+    -*)
+      # Some other browser flag. Not a link, so not a link.
+      ;;
+    *)
+      [ -n "$url" ] || url=$argument
+      ;;
+  esac
+done
 
 setting() {
   [ -r "$config" ] || return 1
@@ -72,11 +116,10 @@ first_browser() {
 case $url in
   --app=*)
     app_url=${url#--app=}
-    shift
     target=$(setting '.webapp') || target=$(setting '.fallback') || target=$(first_browser) || target=""
     [ -n "$target" ] || exit 1
     program=$(desktop_program "$target") || exit 1
-    exec setsid "$program" --app="$app_url" "$@"
+    exec setsid "$program" --app="$app_url"
     ;;
 esac
 
@@ -117,11 +160,19 @@ launch_desktop() {
 # 0, so the reply is checked rather than the exit status: Service.qml answers
 # with one of routed/asked/failed/empty.
 if command -v omarchy-shell >/dev/null 2>&1; then
-  reply=$(omarchy-shell io.github.guilhermeyo.mclovin open "$url" 2>/dev/null || true)
+  if [ "$want_private" -eq 1 ]; then
+    reply=$(omarchy-shell io.github.guilhermeyo.mclovin openPrivate "$url" 2>/dev/null || true)
+  else
+    reply=$(omarchy-shell io.github.guilhermeyo.mclovin open "$url" 2>/dev/null || true)
+  fi
   case $reply in
     routed|asked) exit 0 ;;
   esac
 fi
+
+# Nothing to fall back to when there was no link in the first place: the ask was
+# "let me pick a browser", and without the shell there is no picker to offer.
+[ -n "$url" ] || exit 1
 
 # Shell down, plugin disabled, or the picker could not be summoned. Try the
 # configured fallback, then any installed browser — a link is never dropped

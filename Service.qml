@@ -247,9 +247,13 @@ Item {
   // The single entry point for an incoming link. Returns a short status string
   // because IPC callers (and the shim's fallback path) need to know whether the
   // shell actually took the URL.
-  function route(url) {
+  function route(url, wantPrivate) {
     var target = String(url || "").trim()
-    if (!target) return "empty"
+
+    // No link is a real request, not a mistake: `omarchy-launch-browser` and
+    // any keybind like it invoke the default browser with no arguments, and
+    // the answer to "open a browser" is the picker.
+    if (!target) return ask("", wantPrivate === true) ? "asked" : "failed"
 
     var parsed = Router.parseUrl(target)
     var rule = Router.firstMatch(root.rules, parsed)
@@ -261,7 +265,7 @@ Item {
       }
       // The rule names a browser that is no longer installed. Asking beats
       // silently swallowing the click.
-    } else if (root.fallbackBrowser) {
+    } else if (root.fallbackBrowser && !wantPrivate) {
       var fallback = { browser: root.fallbackBrowser, profile: root.config.fallbackProfile || "" }
       if (launch(fallback, target)) {
         record(targetName(fallback), "", target)
@@ -269,14 +273,17 @@ Item {
       }
     }
 
-    return ask(target) ? "asked" : "failed"
+    return ask(target, wantPrivate === true) ? "asked" : "failed"
   }
 
   // Opens the picker overlay with the URL in flight. The overlay is a separate
   // kind on this same plugin, so summoning by our own id reaches it.
-  function ask(url) {
+  function ask(url, wantPrivate) {
     if (!root.shell || typeof root.shell.summon !== "function") return false
-    return root.shell.summon(root.pluginId, JSON.stringify({ url: String(url || "") })) === true
+    return root.shell.summon(root.pluginId, JSON.stringify({
+      url: String(url || ""),
+      private: wantPrivate === true
+    })) === true
   }
 
   // Called by the picker once the user has chosen. Kept here rather than in the
@@ -551,7 +558,13 @@ Item {
     target: root.pluginId
 
     function open(url: string): string {
-      return root.route(url)
+      return root.route(url, false)
+    }
+
+    // What a browser's own --private/--incognito flag means when the handler
+    // standing in for it is asked to open something.
+    function openPrivate(url: string): string {
+      return root.route(url, true)
     }
 
     function togglePanel(): string { return root.drivePanel("toggle") }
