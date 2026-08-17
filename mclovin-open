@@ -125,6 +125,13 @@ esac
 
 # Locate a .desktop by id across the standard data dirs and run its Exec line
 # with the URL substituted. Used only on the fallback path.
+#
+# The URL arrives from whatever asked the system to open a link, so it is
+# untrusted input and never becomes shell source. This builds an argument list
+# and runs it directly: the link is one element of that list, so a URL
+# containing $(…), a backtick or a quote is a strange URL and nothing more.
+# Substituting it into a command string for `sh -c` — even with the quotes
+# escaped — makes any of those execute as the user instead.
 launch_desktop() {
   id=$1
   case $id in
@@ -141,15 +148,51 @@ launch_desktop() {
     file="$dir/$id"
     [ -f "$file" ] || continue
 
-    # First Exec= in the [Desktop Entry] group. Field codes other than the URL
-    # placeholders are dropped, as the desktop entry spec requires.
+    # First Exec= in the [Desktop Entry] group.
     exec_line=$(sed -n 's/^Exec=//p' "$file" | head -n1)
     [ -n "$exec_line" ] || continue
 
-    quoted=$(printf '%s' "$url" | sed 's/"/\\"/g')
-    cmd=$(printf '%s' "$exec_line" | sed -e "s|%[uUfF]|\"$quoted\"|g" -e 's/%[a-zA-Z]//g')
+    # Split the Exec line on whitespace, with globbing off so a token holding a
+    # * cannot expand into a list of filenames. Quoted arguments containing
+    # spaces are not reassembled — no installed browser writes one, and the
+    # plugin's own launcher, which handles the ordinary path, parses them
+    # properly. Splitting wrongly here fails to launch; it cannot run anything
+    # that was not already in the desktop file.
+    set -f
+    # shellcheck disable=SC2086
+    set -- $exec_line
+    set +f
+    [ "$#" -gt 0 ] || continue
 
-    setsid /bin/sh -c "$cmd" >/dev/null 2>&1 &
+    # Rebuild the list, replacing the URL field codes with the link and dropping
+    # every other code, as the desktop entry spec requires. Rotating the
+    # positional parameters is the only array a POSIX shell has: each turn takes
+    # one original off the front and appends what it becomes to the back.
+    count=$#
+    url_seen=0
+    i=0
+    while [ "$i" -lt "$count" ]; do
+      token=$1
+      shift
+      case $token in
+        %u|%U|%f|%F)
+          url_seen=1
+          [ -z "$url" ] || set -- "$@" "$url"
+          ;;
+        %[a-zA-Z]) ;;
+        *) set -- "$@" "$token" ;;
+      esac
+      i=$((i + 1))
+    done
+
+    # An entry with no placeholder still has to receive the link, which is what
+    # the plugin's launcher and the mclovin CLI both do.
+    if [ "$url_seen" -eq 0 ] && [ -n "$url" ]; then
+      set -- "$@" "$url"
+    fi
+    [ "$#" -gt 0 ] || continue
+
+    setsid "$@" >/dev/null 2>&1 &
     return 0
   done
 
