@@ -342,10 +342,74 @@ Item {
     // Kept as state rather than a log line: when a link lands in the wrong
     // browser the only question that matters is what was actually run, and
     // `status` is where someone already looks.
+    // A pick with no link means "take me to that browser". If that profile
+    // already has a window, going there is the answer; a second window is not.
+    // A private pick always opens: the point of it is a fresh private window.
+    if (!String(url || "") && target.private !== true) {
+      windowScan.pendingArgv = argv
+      windowScan.pendingBrowser = entry.id
+      windowScan.pendingProfile = target.profile
+      windowScan.pendingProfileCount = profilesFor(entry.id).length
+      windowScan.pendingRecord = { browser: entry.id, profile: target.profile,
+                                   directory: dir, private: false, argv: argv }
+      windowScan.running = true
+      return true
+    }
+
     root.lastLaunch = { browser: entry.id, profile: target.profile,
                         directory: dir, private: target.private === true, argv: argv }
     Quickshell.execDetached(argv)
     return true
+  }
+
+  // Asking the compositor is asynchronous, so the decision lands here rather
+  // than inside launch(). By then the picker has already closed, which is
+  // correct either way: the pick was accepted.
+  Process {
+    id: windowScan
+    property var pendingArgv: []
+    property string pendingBrowser: ""
+    property string pendingProfile: ""
+    property int pendingProfileCount: 0
+    property var pendingRecord: null
+
+    command: ["hyprctl", "-j", "clients"]
+    stdout: StdioCollector {
+      onStreamFinished: root.focusOrLaunch(text)
+    }
+  }
+
+  Timer {
+    id: focusDelay
+    property string address: ""
+    interval: 220
+    onTriggered: Quickshell.execDetached(["hyprctl", "dispatch",
+      "hl.dsp.focus({ window = \"address:" + address + "\" })"])
+  }
+
+  function focusOrLaunch(clientsJson) {
+    var clients = []
+    try { clients = JSON.parse(clientsJson) } catch (e) { clients = [] }
+
+    var address = Browsers.findProfileWindow(clients, windowScan.pendingBrowser,
+                                             windowScan.pendingProfile,
+                                             windowScan.pendingProfileCount)
+    var record = windowScan.pendingRecord || {}
+
+    if (address) {
+      record.focused = address
+      root.lastLaunch = record
+      // Not immediate: the overlay is a layer surface holding exclusive
+      // keyboard focus and is dismissed on the same tick this decision starts.
+      // Focusing the browser before that surface is gone gets undone when the
+      // compositor hands focus back to whatever was under it.
+      focusDelay.address = address
+      focusDelay.restart()
+      return
+    }
+
+    root.lastLaunch = record
+    Quickshell.execDetached(windowScan.pendingArgv)
   }
 
   function supportsPrivate(browserId) {

@@ -315,6 +315,68 @@ function launchArgs(browserId, execString, url, profileDirectory, wantPrivate) {
   return [argv[0]].concat(flags, argv.slice(1))
 }
 
+// --------------------------------------------------------- existing windows
+//
+// "Open Brave · 44" when Brave · 44 is already on screen should take you there,
+// not stack a second window on top. The browser will not do this — asked for a
+// profile with no URL, Chromium opens another window — so the compositor has to
+// be asked instead, which means recognising which window belongs to which
+// browser and profile.
+//
+// A `--app=` window reports a class like "brave-web.whatsapp.com__-Default".
+// That marker is what keeps a webapp from ever counting as the browser being
+// open, which it is not.
+function isAppWindowClass(cls) { return String(cls || "").indexOf("__-") !== -1 }
+
+function isOrdinaryWindowOf(cls, browserId) {
+  var c = String(cls || "").toLowerCase()
+  var id = String(browserId || "").toLowerCase()
+  if (!c || !id || isAppWindowClass(c)) return false
+  return c === id || c.indexOf(id) === 0 || id.indexOf(c) === 0
+}
+
+// Firefox writes the profile into the window title — "… — Personal — Mozilla
+// Firefox" — so its windows can be told apart. Chromium-family windows report
+// the same class and the same title shape whatever profile they are showing,
+// so the only case that can be answered honestly there is a browser with a
+// single profile: every ordinary window of it is that profile by definition.
+// With several, guessing would send the link to the wrong one, and returning
+// nothing simply falls through to launching, which is what happened before.
+// Firefox titles read "<page> — <profile> — Mozilla Firefox", and drop the page
+// when there is not one yet: "<profile> — Mozilla Firefox". So the profile is
+// whatever sits immediately before the Mozilla segment, not a fixed position.
+// A private window appends " Private Browsing" to that segment and is never a
+// place to send an ordinary request.
+function geckoTitleProfile(title) {
+  var parts = String(title || "").split(" — ")
+  for (var i = parts.length - 1; i >= 0; i--) {
+    if (parts[i].indexOf("Mozilla Firefox") !== 0) continue
+    if (parts[i].indexOf("Private Browsing") !== -1) return ""
+    return i > 0 ? parts[i - 1] : ""
+  }
+  return ""
+}
+
+function findProfileWindow(clients, browserId, profileName, profileCount) {
+  var list = clients || []
+  var gecko = isFirefoxFamily(browserId)
+  var wanted = String(profileName || "")
+
+  for (var i = 0; i < list.length; i++) {
+    var client = list[i]
+    if (!client || !isOrdinaryWindowOf(client["class"], browserId)) continue
+
+    if (gecko) {
+      if (!wanted) return String(client.address || "")
+      if (geckoTitleProfile(client.title) === wanted) return String(client.address || "")
+      continue
+    }
+
+    if (!wanted || Number(profileCount) <= 1) return String(client.address || "")
+  }
+  return ""
+}
+
 // ------------------------------------------------------------------- browsers
 
 // DesktopEntry.categories is a QStringList, which reaches JS as an array-LIKE
