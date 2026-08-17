@@ -343,6 +343,20 @@ Panel {
               }
             }
 
+            // The row itself opens the editor, but a row that only shows a ×
+            // reads as "delete is the only thing you can do here". The pencil
+            // costs one glyph and names the action the row already performs.
+            PanelActionButton {
+              Layout.alignment: Qt.AlignVCenter
+              iconText: "󰏫"
+              tooltipText: "Edit this rule"
+              foreground: root.faint
+              hoverColor: root.foreground
+              fontFamily: root.fontFamily
+              size: Style.space(20)
+              onClicked: root.editRule(ruleSurface.index)
+            }
+
             PanelActionButton {
               Layout.alignment: Qt.AlignVCenter
               iconText: "󰅖"
