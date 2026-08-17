@@ -78,9 +78,19 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  onOpenedChanged: if (opened && service) {
-    service.refreshBrowsers()
-    service.refreshHandler()
+  // Which rule the × was pressed on, -1 when nothing is pending. Deleting a
+  // rule used to happen on that single click, with nothing between the pointer
+  // slipping and the rule being gone.
+  property int pendingDelete: -1
+  readonly property var pendingRule:
+    (pendingDelete >= 0 && pendingDelete < rules.length) ? rules[pendingDelete] : null
+
+  onOpenedChanged: {
+    root.pendingDelete = -1
+    if (opened && service) {
+      service.refreshBrowsers()
+      service.refreshHandler()
+    }
   }
 
   BarIconButton {
@@ -124,6 +134,26 @@ Panel {
     // profile name — fits without an ellipsis.
     contentWidth: panel.fittedContentWidth(Style.space(380))
     contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(620))
+
+    // Names the rule rather than asking "are you sure?", because the question
+    // worth answering is whether this is the one you meant.
+    ConfirmDialog {
+      anchors.fill: parent
+      z: 10
+      opened: root.pendingDelete >= 0
+      message: root.pendingRule
+        ? "Delete “" + Router.ruleSummary(root.pendingRule) + "”?"
+        : "Delete this rule?"
+      confirmText: "Delete"
+      background: Color.popups.background
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onCanceled: root.pendingDelete = -1
+      onConfirmed: {
+        if (root.service) root.service.removeRule(root.pendingDelete)
+        root.pendingDelete = -1
+      }
+    }
 
     Column {
       id: content
@@ -311,7 +341,7 @@ Panel {
               hoverColor: root.urgentish
               fontFamily: root.fontFamily
               size: Style.space(20)
-              onClicked: if (root.service) root.service.removeRule(ruleSurface.index)
+              onClicked: root.pendingDelete = ruleSurface.index
             }
           }
 
