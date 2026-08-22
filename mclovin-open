@@ -90,7 +90,15 @@ desktop_program() {
   return 1
 }
 
-# First installed browser that is not this handler, as a desktop id.
+# First installed browser that is not a mclovin router, as a desktop id.
+#
+# Every mclovin is skipped, not just this plugin's own entry. The retired CLI
+# installs mclovin.desktop with Categories=Network;WebBrowser, so on a machine
+# that ran both it is the only WebBrowser entry in ~/.local/share/applications
+# — which is scanned first. Skipping only this plugin's reverse-DNS id handed
+# every fallback click to the old router, with its own separate rules.toml and
+# its own picker, and the real browsers in /usr/share/applications were never
+# reached.
 first_browser() {
   for dir in \
     "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
@@ -99,8 +107,8 @@ first_browser() {
     [ -d "$dir" ] || continue
     for file in "$dir"/*.desktop; do
       [ -f "$file" ] || continue
-      case $file in
-        *io.github.guilhermeyo.mclovin.desktop) continue ;;
+      case $(basename "$file") in
+        *mclovin*) continue ;;
       esac
       grep -qi '^Categories=.*WebBrowser' "$file" || continue
       basename "$file"
