@@ -1,0 +1,275 @@
+#!/bin/sh
+# Teach `omarchy-launch-webapp` that mclovin is an acceptable default browser.
+#
+# Omarchy launches web apps as `<default browser> --app=URL`, but only for a
+# browser on a hardcoded whitelist in bin/omarchy-launch-webapp:
+#
+#   case $browser in
+#   google-chrome* | brave* | ... | helium*) ;;
+#   *) browser="chromium.desktop" ;;
+#   esac
+#
+# mclovin is not on it, so every web app — the Hyprland bindings as much as the
+# .desktop launchers — silently opens in Chromium instead of the browser the
+# user configured. This adds `*mclovin*` to that whitelist.
+#
+# Why a glob and not the handler's id: this plugin registers
+# io.github.guilhermeyo.mclovin.desktop, the retired mclovin CLI registered
+# mclovin.desktop, and a prefix pattern pinned to either one goes quietly dead
+# the moment the other becomes the default. `*mclovin*` covers the family.
+#
+# Why patch Omarchy's tree at all — the uncomfortable part. The alternative is
+# rewriting the Exec= line of every web app .desktop, which never touches
+# Omarchy and would survive updates for free. It is not enough: the Hyprland
+# bindings call `omarchy-launch-webapp <url>` directly, with no .desktop in the
+# path, so Super+Shift+Alt+G would still land in Chromium. This script is the
+# only place that covers both.
+#
+# The cost is real and worth stating: omarchy-update runs `git pull --ff-only`
+# on $OMARCHY_PATH, and this leaves a tracked file modified. When upstream edits
+# omarchy-launch-webapp — nine times in the last twelve months — the pull aborts
+# with "local changes would be overwritten" and the whole update stops. Nothing
+# is lost and nothing is silent; recover with `--revert`, update, re-apply. The
+# post-update hook re-applies automatically on every clean update. There is no
+# pre-update hook to make the abort go away.
+
+set -eu
+
+self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mclovin/config.json"
+script="${OMARCHY_PATH:-${XDG_DATA_HOME:-$HOME/.local/share}/omarchy}/bin/omarchy-launch-webapp"
+backup="$script.before-mclovin.bak"
+
+quiet=0
+mode=apply
+
+for argument in "$@"; do
+  case $argument in
+    --quiet|-q) quiet=1 ;;
+    --check) mode=check ;;
+    --revert) mode=revert ;;
+    --help|-h) mode=usage ;;
+    *)
+      echo "mclovin-webapp-fix: unknown argument: $argument" >&2
+      exit 2
+      ;;
+  esac
+done
+
+say()  { [ "$quiet" -eq 1 ] || printf '%s\n' "$*"; }
+ok()   { [ "$quiet" -eq 1 ] || printf '\033[32m✔\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m▲\033[0m %s\n' "$*" >&2; }
+fail() { printf '\033[31m✖\033[0m %s\n' "$*" >&2; }
+
+if [ "$mode" = usage ]; then
+  cat <<'USAGE'
+mclovin-webapp-fix — let Omarchy web apps open through mclovin.
+
+Usage: mclovin-webapp-fix [--quiet]     apply the patch (idempotent)
+       mclovin-webapp-fix --check       verify the whole chain actually works
+       mclovin-webapp-fix --revert      restore Omarchy's original script
+
+Run by ~/.config/omarchy/hooks/post-update.d/mclovin-webapp-fix.hook after
+every `omarchy update`, which restores the file to upstream.
+USAGE
+  exit 0
+fi
+
+# The whitelist line, located by shape rather than pinned verbatim: upstream
+# adds browsers to it (Helium twice in the last year), and a pinned copy would
+# refuse to apply every time that happened.
+whitelist_line() {
+  sed -n '/^google-chrome\*.*) ;;$/p' "$script" | head -n1
+}
+
+# Print the Exec= program of a desktop id, the same way omarchy-launch-webapp
+# resolves one.
+desktop_program() {
+  id=$1
+  case $id in
+    *.desktop) ;;
+    *) id="$id.desktop" ;;
+  esac
+  for dir in \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
+    "$HOME/.nix-profile/share/applications" \
+    /usr/local/share/applications \
+    /usr/share/applications \
+    /var/lib/flatpak/exports/share/applications
+  do
+    [ -f "$dir/$id" ] || continue
+    sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$dir/$id" | head -n1
+    return 0
+  done
+  return 1
+}
+
+setting() {
+  [ -r "$config" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  value=$(jq -r "$1 // empty" "$config" 2>/dev/null) || return 1
+  [ -n "$value" ] || return 1
+  printf '%s' "$value"
+}
+
+case $mode in
+  revert)
+    if [ -f "$backup" ]; then
+      cp "$backup" "$script"
+      rm -f "$backup"
+      ok "Restored $script from backup"
+    elif command -v git >/dev/null 2>&1 &&
+         git -C "$(dirname "$script")" checkout -- "$script" 2>/dev/null; then
+      ok "Restored $script from git"
+    else
+      fail "No backup and no git checkout available for $script"
+      exit 1
+    fi
+    say "Web apps now open in Chromium again until you re-apply."
+    exit 0
+    ;;
+
+  apply)
+    [ -f "$script" ] || { warn "$script not found — nothing to patch"; exit 0; }
+
+    # A packaged Omarchy lives under /usr and belongs to the package manager.
+    # Say so, rather than letting sed fail with a bare permission error.
+    if [ ! -w "$script" ] || [ ! -w "$(dirname "$script")" ]; then
+      fail "$script is not writable."
+      fail "  Omarchy is installed system-wide here, so the whitelist is not yours to edit."
+      fail "  Set your web apps' browser as the system default instead, or run Omarchy"
+      fail "  from a checkout under \$HOME."
+      exit 1
+    fi
+
+    line=$(whitelist_line)
+    if [ -z "$line" ]; then
+      fail "No browser whitelist line in $script — Omarchy reshaped the script."
+      fail "Report it at https://github.com/guilhermeyo/omarchy-mclovin so this can follow."
+      exit 1
+    fi
+
+    case $line in
+      *'*mclovin*'*)
+        ok "$script already whitelists mclovin"
+        exit 0
+        ;;
+      *'| mclovin*'*)
+        # Left by the retired CLI. It is a prefix pattern, so it matches
+        # mclovin.desktop and misses this plugin's reverse-DNS id — the exact
+        # bug this glob widening exists to fix.
+        [ -f "$backup" ] || cp "$script" "$backup"
+        sed -i 's/^\(google-chrome\*.*\) | mclovin\*) ;;$/\1 | *mclovin*) ;;/' "$script"
+        ok "Widened the legacy mclovin* pattern to *mclovin* in $script"
+        ;;
+      *)
+        [ -f "$backup" ] || cp "$script" "$backup"
+        sed -i 's/^\(google-chrome\*[^)]*\)) ;;$/\1 | *mclovin*) ;;/' "$script"
+        ok "Patched $script (backup: $backup)"
+        ;;
+    esac
+
+    case $(whitelist_line) in
+      *'*mclovin*'*) ;;
+      *)
+        fail "Patch did not take. $script is unchanged."
+        exit 1
+        ;;
+    esac
+    say "Omarchy web apps now route through mclovin. Verify with --check."
+    exit 0
+    ;;
+esac
+
+# --check. The point of this mode is that it refuses to answer "is the patch
+# there" and answers "does a web app click reach the right browser" instead.
+# The CLI's doctor only ever grepped for its own patch string, so it reported a
+# healthy whitelist for months while every web app opened in Chromium: the
+# pattern was present and matched nothing, because the default handler had
+# changed ids underneath it.
+status=0
+
+if [ ! -f "$script" ]; then
+  warn "omarchy-launch-webapp not found at $script — not an Omarchy system?"
+  exit 0
+fi
+
+line=$(whitelist_line)
+if [ -z "$line" ]; then
+  fail "No browser whitelist line in $script — Omarchy reshaped the script"
+  exit 1
+fi
+
+case $line in
+  *'*mclovin*'*) ok "Whitelist: omarchy-launch-webapp accepts mclovin" ;;
+  *'| mclovin*'*)
+    fail "Whitelist: carries the legacy prefix mclovin*, which misses this plugin's id"
+    fail "  Run mclovin-webapp-fix to widen it"
+    status=1
+    ;;
+  *)
+    fail "Whitelist: omarchy-launch-webapp does not accept mclovin — web apps open in Chromium"
+    fail "  Run mclovin-webapp-fix"
+    status=1
+    ;;
+esac
+
+default=$(xdg-settings get default-web-browser 2>/dev/null || true)
+if [ -z "$default" ]; then
+  warn "Default handler: could not read it from xdg-settings"
+  status=1
+else
+  # The whitelist is only worth anything if the *actual* default handler
+  # matches it. Evaluating the real id against the real pattern is the check
+  # that was missing.
+  case $default in
+    *mclovin*) ok "Default handler: $default matches the whitelist" ;;
+    *)
+      fail "Default handler: $default is not mclovin — the whitelist patch is inert"
+      status=1
+      ;;
+  esac
+fi
+
+if [ -n "$default" ]; then
+  if handler=$(desktop_program "$default"); then
+    if [ -x "$handler" ]; then
+      ok "Handler binary: $handler"
+    else
+      fail "Handler binary: $handler is not executable"
+      status=1
+    fi
+  else
+    fail "Handler binary: no desktop entry found for $default"
+    status=1
+  fi
+fi
+
+target=$(setting '.webapp') || target=$(setting '.fallback') || target=""
+if [ -z "$target" ]; then
+  fail "Web app browser: neither .webapp nor .fallback is set in $config"
+  fail "  Web apps fall through to the first browser found, which may be the retired CLI"
+  status=1
+elif program=$(desktop_program "$target"); then
+  case $(basename "$program") in
+    *firefox*|*librewolf*|*zen*|*floorp*)
+      fail "Web app browser: $target is Gecko-based and has no --app= — web apps will not open"
+      status=1
+      ;;
+    *)
+      if command -v "$program" >/dev/null 2>&1 || [ -x "$program" ]; then
+        ok "Web app browser: $target ($program)"
+      else
+        fail "Web app browser: $target resolves to $program, which is not installed"
+        status=1
+      fi
+      ;;
+  esac
+else
+  fail "Web app browser: no desktop entry named $target"
+  status=1
+fi
+
+[ -x "$self_dir/mclovin-open" ] || { fail "Shim: $self_dir/mclovin-open is missing or not executable"; status=1; }
+
+exit $status

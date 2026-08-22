@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Re-apply mclovin's web app patch after `omarchy update`.
+#
+# omarchy-update-dev runs `git pull --ff-only` on $OMARCHY_PATH, which restores
+# bin/omarchy-launch-webapp to upstream. Without this hook the launcher goes back
+# to hardcoding chromium, and every Omarchy web app opens outside the browser
+# where its sessions live.
+#
+# Install with:
+#   install -Dm755 \
+#     ~/.config/omarchy/plugins/io.github.guilhermeyo.mclovin/hooks/mclovin-webapp-fix.hook \
+#     ~/.config/omarchy/hooks/post-update.d/mclovin-webapp-fix.hook
+#
+# NOTE: this runs AFTER the git pull. When upstream edits omarchy-launch-webapp
+# itself, the pull aborts before reaching here with "local changes would be
+# overwritten" and the update stops. Nothing is lost. Recover with:
+#   mclovin-webapp-fix --revert && omarchy update
+
+set -e
+
+FIX="$HOME/.config/omarchy/plugins/io.github.guilhermeyo.mclovin/mclovin-webapp-fix"
+
+[[ -x $FIX ]] || exit 0
+
+"$FIX" --quiet
