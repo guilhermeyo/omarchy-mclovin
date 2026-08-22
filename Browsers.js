@@ -432,6 +432,13 @@ function isBrowserEntry(entry, selfDesktopId) {
   if (selfDesktopId && id === selfDesktopId) return false
   if (selfDesktopId && id === selfDesktopId.replace(/\.desktop$/, "")) return false
 
+  // Any mclovin is a router, not a browser — including the retired CLI, which
+  // installs mclovin.desktop with Categories=Network;WebBrowser and NoDisplay
+  // unset. Matching only selfDesktopId let it show up as a picker row and as a
+  // rule target, so a link could be routed into a second router carrying its
+  // own rules.toml.
+  if (id.toLowerCase().indexOf("mclovin") !== -1) return false
+
   var list = categoryList(entry.categories)
   for (var i = 0; i < list.length; i++) {
     if (String(list[i]).trim().toLowerCase() === "webbrowser") return true
