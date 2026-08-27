@@ -50,6 +50,8 @@ Item {
   // installed — the git checkout, a clone, or a hand-made directory.
   readonly property string handlerScript: Qt.resolvedUrl("mclovin-open").toString().replace("file://", "")
   readonly property string iconPath: Qt.resolvedUrl("mclovin.svg").toString().replace("file://", "")
+  readonly property string companionManager: Qt.resolvedUrl("browser-companion/native/manage").toString().replace("file://", "")
+  readonly property string companionExtensionPath: Qt.resolvedUrl("browser-companion/extension").toString().replace("file://", "")
 
   // ------------------------------------------------------------------ state
 
@@ -65,6 +67,31 @@ Item {
 
   readonly property var rules: config.rules || []
   readonly property string fallbackBrowser: config.fallback || ""
+  readonly property bool hasZoomRule: {
+    for (var i = 0; i < root.rules.length; i++) {
+      if (root.rules[i] && root.rules[i].action === Router.ACTION_ZOOM) return true
+    }
+    return false
+  }
+
+  // The extension is optional and runs outside omarchy-shell. Its management
+  // command reports whether a native manifest is registered and whether the
+  // extension has ever completed its local handshake. No page or link history
+  // crosses this boundary; the status file contains only id, version and time.
+  property var browserCompanion: ({
+    extensionId: "",
+    extensionPath: companionExtensionPath,
+    registeredBrowsers: [],
+    invalidBrowsers: [],
+    connected: false,
+    extensionVersion: "",
+    lastSeen: "",
+    storeUrl: ""
+  })
+  property string browserCompanionError: ""
+  readonly property bool browserCompanionRegistered:
+    browserCompanion.registeredBrowsers && browserCompanion.registeredBrowsers.length > 0
+  readonly property bool browserCompanionConnected: browserCompanion.connected === true
 
   // Every installed web browser, minus ourselves. Recomputed whenever the
   // desktop entry index changes, so a browser installed mid-session shows up
@@ -72,6 +99,33 @@ Item {
   property var browsers: []
 
   function today() { return Qt.formatDate(new Date(), "yyyy-MM-dd") }
+
+  function acceptBrowserCompanionStatus(raw) {
+    var value = String(raw || "").trim()
+    if (!value) return
+    try {
+      var parsed = JSON.parse(value)
+      if (!parsed || typeof parsed !== "object") throw new Error("status is not an object")
+      root.browserCompanion = parsed
+      root.browserCompanionError = ""
+    } catch (error) {
+      root.browserCompanionError = "Could not read browser companion status."
+    }
+  }
+
+  function refreshBrowserCompanion() {
+    if (!companionStatus.running) companionStatus.running = true
+  }
+
+  function setupBrowserCompanion() {
+    root.browserCompanionError = ""
+    if (!companionSetup.running) companionSetup.running = true
+  }
+
+  function openBrowserCompanionSetup() {
+    root.browserCompanionError = ""
+    if (!companionOpen.running) companionOpen.running = true
+  }
 
   function refreshBrowsers() {
     var values = (DesktopEntries.applications && DesktopEntries.applications.values) || []
@@ -686,6 +740,43 @@ Item {
     onExited: root.refreshHandler()
   }
 
+  Process {
+    id: companionStatus
+    command: [root.companionManager, "status", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: root.acceptBrowserCompanionStatus(text)
+    }
+    stderr: StdioCollector {
+      onStreamFinished: if (String(text).trim())
+        root.browserCompanionError = "Could not check the browser companion."
+    }
+  }
+
+  // One contextual action does both safe local preparation steps: register the
+  // native host and open Chromium's own extension/install screen. Chromium is
+  // still the authority that shows and accepts the all-sites permission.
+  Process {
+    id: companionSetup
+    command: [root.companionManager, "setup", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: root.acceptBrowserCompanionStatus(text)
+    }
+    stderr: StdioCollector {
+      onStreamFinished: if (String(text).trim())
+        root.browserCompanionError = "Could not prepare the browser companion."
+    }
+    onExited: root.refreshBrowserCompanion()
+  }
+
+  Process {
+    id: companionOpen
+    command: [root.companionManager, "open", "--json"]
+    stderr: StdioCollector {
+      onStreamFinished: if (String(text).trim())
+        root.browserCompanionError = "Could not open Chromium extension setup."
+    }
+  }
+
   // ------------------------------------------------------------------- disk
 
   FileView {
@@ -767,6 +858,7 @@ Item {
         importable: root.importableCount,
         lastLaunch: root.lastLaunch,
         lastError: root.lastError,
+        browserCompanion: root.browserCompanion,
         profiles: (function() {
           var out = {}
           for (var k in root.profilesByBrowser) out[k] = root.profilesByBrowser[k].length
@@ -780,6 +872,17 @@ Item {
       root.refreshWebapps()
       root.refreshHandler()
       root.reloadFirefoxProfiles()
+      root.refreshBrowserCompanion()
+      return "ok"
+    }
+
+    function setupBrowserCompanion(): string {
+      root.setupBrowserCompanion()
+      return "ok"
+    }
+
+    function refreshBrowserCompanion(): string {
+      root.refreshBrowserCompanion()
       return "ok"
     }
 
@@ -799,5 +902,9 @@ Item {
     }
   }
 
-  Component.onCompleted: { refreshBrowsers(); refreshWebapps() }
+  Component.onCompleted: {
+    refreshBrowsers()
+    refreshWebapps()
+    refreshBrowserCompanion()
+  }
 }
