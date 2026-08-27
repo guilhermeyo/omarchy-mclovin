@@ -340,11 +340,18 @@ Item {
     return true
   }
 
-  // A target is a rule-shaped object: {webapp}, {command}, or
+  // A target is a rule-shaped object: {action}, {webapp}, {command}, or
   // {browser, profile, private}.
   function launch(target, url) {
     root.lastError = ""
     if (!target) return false
+
+    if (target.action === Router.ACTION_ZOOM) {
+      var zoomArgv = [root.handlerScript, "--zoom-direct", String(url || "")]
+      root.lastLaunch = { action: target.action, argv: zoomArgv }
+      Quickshell.execDetached(zoomArgv)
+      return true
+    }
 
     if (target.webapp) {
       var app = webappById(target.webapp)
@@ -527,6 +534,7 @@ Item {
   // so the rule rows keep their two-line shape.
   function targetName(target) {
     if (!target) return ""
+    if (target.action === Router.ACTION_ZOOM) return "Zoom directly"
     if (target.command) return String(target.command).split(" ")[0]
     if (target.webapp) {
       var app = webappById(target.webapp)

@@ -22,6 +22,7 @@ mclovin — choose which browser opens a link.
 Usage: mclovin-open [URL]
        mclovin-open --app=URL
        mclovin-open --incognito [URL]
+       mclovin-open --zoom-direct URL
 
 With no URL it opens the picker so you can just pick a browser. Registered as
 the system http/https handler by the mclovin Omarchy plugin.
@@ -36,6 +37,7 @@ USAGE
 # opens", for every browser rather than one.
 url=""
 want_private=0
+zoom_direct=0
 
 for argument in "$@"; do
   case $argument in
@@ -47,6 +49,11 @@ for argument in "$@"; do
       # Handled below, where the webapp browser is resolved.
       url=$argument
       break
+      ;;
+    --zoom-direct)
+      # Built-in rule target: the following URL is converted to zoommtg://
+      # after the safe browser fallback helpers below have been defined.
+      zoom_direct=1
       ;;
     # omarchy-launch-browser rewrites its own --private into whichever flag the
     # detected browser wants, so accept the whole family.
@@ -207,6 +214,96 @@ launch_desktop() {
   return 1
 }
 
+# Open a URL in a real browser without asking the system's http handler. Once
+# mclovin is the default, xdg-open on the original URL would route straight
+# back here and loop; resolving the configured desktop entry avoids that.
+fallback_url() {
+  url=$1
+
+  if fallback=$(setting '.fallback') && launch_desktop "$fallback"; then
+    return 0
+  fi
+
+  if any=$(first_browser) && launch_desktop "$any"; then
+    return 0
+  fi
+
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send -u critical "mclovin" "Could not open $url — no fallback browser is available."
+  fi
+  return 1
+}
+
+# Convert only numbered HTTPS meeting URLs on zoom.us or its subdomains. The
+# password stays percent-encoded exactly as Zoom supplied it; xdg-open receives
+# the resulting URI as one argument, never as shell source.
+zoom_join_uri() {
+  original=$1
+  case $original in
+    *://*)
+      scheme=${original%%://*}
+      scheme=$(printf '%s' "$scheme" | tr '[:upper:]' '[:lower:]')
+      [ "$scheme" = "https" ] || return 1
+      rest=${original#*://}
+      ;;
+    *) return 1 ;;
+  esac
+
+  authority=${rest%%/*}
+  [ "$authority" != "$rest" ] || return 1
+  case $authority in *'@'*) return 1 ;; esac
+
+  host=${authority%%:*}
+  host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+  case $host in
+    zoom.us|*.zoom.us) ;;
+    *) return 1 ;;
+  esac
+
+  path_and_query=/${rest#*/}
+  path=${path_and_query%%\?*}
+  path=${path%%\#*}
+  case $path in
+    /j/*) meeting=${path#/j/} ;;
+    /w/*) meeting=${path#/w/} ;;
+    /wc/join/*) meeting=${path#/wc/join/} ;;
+    *) return 1 ;;
+  esac
+  meeting=${meeting%%/*}
+  case $meeting in ''|*[!0-9-]*) return 1 ;; esac
+  confno=$(printf '%s' "$meeting" | tr -d '-')
+  [ -n "$confno" ] || return 1
+
+  password=""
+  case $path_and_query in
+    *\?*)
+      query=${path_and_query#*\?}
+      query=${query%%\#*}
+      while [ -n "$query" ]; do
+        pair=${query%%&*}
+        if [ "$pair" = "$query" ]; then query=""; else query=${query#*&}; fi
+        key=${pair%%=*}
+        if [ "$key" = "pwd" ]; then
+          [ "$pair" = "$key" ] || password=${pair#*=}
+          break
+        fi
+      done
+      ;;
+  esac
+
+  uri="zoommtg://zoom.us/join?action=join&confno=$confno"
+  [ -z "$password" ] || uri="$uri&pwd=$password"
+  printf '%s\n' "$uri"
+}
+
+if [ "$zoom_direct" -eq 1 ]; then
+  if uri=$(zoom_join_uri "$url") && command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$uri" >/dev/null 2>&1 && exit 0
+  fi
+  fallback_url "$url"
+  exit $?
+fi
+
 # The happy path. omarchy-shell reports IPC-level failures on stdout with exit
 # 0, so the reply is checked rather than the exit status: Service.qml answers
 # with one of routed/asked/failed/empty.
@@ -225,18 +322,6 @@ fi
 # "let me pick a browser", and without the shell there is no picker to offer.
 [ -n "$url" ] || exit 1
 
-# Shell down, plugin disabled, or the picker could not be summoned. Try the
-# configured fallback, then any installed browser — a link is never dropped
-# just because the shell is not answering.
-if fallback=$(setting '.fallback') && launch_desktop "$fallback"; then
-  exit 0
-fi
-
-if any=$(first_browser) && launch_desktop "$any"; then
-  exit 0
-fi
-
-if command -v notify-send >/dev/null 2>&1; then
-  notify-send -u critical "mclovin" "Could not open $url — no browser found and the Omarchy shell is not responding."
-fi
-exit 1
+# Shell down, plugin disabled, or the picker could not be summoned. A link is
+# never dropped just because the shell is not answering.
+fallback_url "$url"

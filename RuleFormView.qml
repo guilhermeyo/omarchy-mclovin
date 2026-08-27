@@ -76,6 +76,20 @@ Item {
     revision++
   }
 
+  function applyZoomPreset() {
+    var preset = Router.zoomPresetRule()
+    root.when = preset.when
+    root.advanced = true
+    root.targetKind = "zoom"
+    root.commandText = ""
+    root.wantPrivate = false
+    root.testUrl = "https://us02web.zoom.us/j/123456789?pwd=example"
+    termModel.clear()
+    var list = preset.terms || []
+    for (var i = 0; i < list.length; i++) termModel.append({ value: String(list[i]) })
+    root.revision++
+  }
+
   // Browser + profile travel as one string so the dropdown stays a plain
   // value/label list. Ids never contain a pipe; profile names might, so only
   // the first separator counts.
@@ -162,7 +176,11 @@ Item {
       root.advanced = existing.when === Router.WHEN_REGEX
       var list = existing.terms || []
       for (var i = 0; i < list.length; i++) termModel.append({ value: String(list[i]) })
-      if (existing.command) {
+      if (existing.action === Router.ACTION_ZOOM) {
+        root.targetKind = "zoom"
+        root.commandText = ""
+        root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
+      } else if (existing.command) {
         root.targetKind = "command"
         root.commandText = existing.command
         root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
@@ -207,6 +225,8 @@ Item {
     revision
     var t = terms()
     if (t.length === 0) return null
+    if (root.targetKind === "zoom")
+      return Router.makeRule(root.when, t, "", "", "", false, { action: Router.ACTION_ZOOM })
     if (root.targetKind === "command") {
       var cmd = String(root.commandText).trim()
       if (!cmd) return null
@@ -215,7 +235,7 @@ Item {
     if (root.targetKind === "webapp") {
       var app = String(root.webappValue).trim()
       if (!app) return null
-      return Router.makeRule(root.when, t, "", "", "", false, app)
+      return Router.makeRule(root.when, t, "", "", "", false, { webapp: app })
     }
     var id = unpackBrowser(root.browserValue)
     if (!id) return null
@@ -237,6 +257,7 @@ Item {
 
   readonly property string targetLabel: {
     revision
+    if (root.targetKind === "zoom") return "Zoom directly"
     if (root.targetKind === "command") return String(root.commandText).trim()
     if (root.targetKind === "webapp") {
       for (var w = 0; w < root.webappOptions.length; w++) {
@@ -369,6 +390,16 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
         }
+      }
+
+      Button {
+        visible: root.creating
+        text: "Use Zoom preset"
+        foreground: root.foreground
+        accent: root.accent
+        fontFamily: root.fontFamily
+        fontSize: Style.font.bodySmall
+        onClicked: root.applyZoomPreset()
       }
     }
 
@@ -553,7 +584,8 @@ Item {
           options: [
             { value: "browser", label: "A browser" },
             { value: "webapp", label: "A web app" },
-            { value: "command", label: "A command" }
+            { value: "command", label: "A command" },
+            { value: "zoom", label: "Zoom directly" }
           ]
           onChanged: function(value) { root.targetKind = value; root.revision++ }
         }
@@ -636,6 +668,16 @@ Item {
           Layout.fillWidth: true
           visible: root.targetKind === "command"
           text: "{url} is replaced with the link. Leave it out and the app opens with nothing."
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
+        }
+
+        Text {
+          Layout.fillWidth: true
+          visible: root.targetKind === "zoom"
+          text: "Turns a numbered Zoom meeting link into zoommtg:// before a browser opens. If the protocol cannot launch, the original link goes to your fallback browser."
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
