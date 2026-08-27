@@ -451,7 +451,6 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WrapAnywhere
-          selectByMouse: true
         }
 
         Text {
