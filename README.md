@@ -188,9 +188,12 @@ two.
 picker shows, never a field you have to guess the spelling of — a command with
 `{url}` in it, or the built-in **Zoom directly** target.
 
-**Use Zoom preset** fills the form with a narrow rule for numbered Zoom meeting
-links and selects **Zoom directly**. That target changes an ordinary
-`https://…zoom.us/j/…` link into `zoommtg://` before a browser opens. A native
+**Start from…** is a preset library above the form. **Custom rule** keeps the
+ordinary editor defaults; **Zoom meeting → Zoom directly** fills the editable
+form with a narrow rule for numbered Zoom meeting links and selects **Zoom
+directly**. New presets are data-driven entries in `Router.js`, so the library
+can grow without adding one-off controls to the form. The Zoom target changes
+an ordinary `https://…zoom.us/j/…` link into `zoommtg://` before a browser opens. A native
 Zoom installation can own that protocol; on stock Omarchy its registered
 handler opens the meeting in a chromeless Zoom webapp. If the protocol cannot
 launch, mclovin sends the original HTTPS link to the configured fallback

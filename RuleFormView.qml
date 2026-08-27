@@ -33,7 +33,9 @@ Item {
   property string webappValue: ""
   property string commandText: ""
   property string testUrl: ""
+  property string seedUrl: ""
   property bool wantPrivate: false
+  property string presetValue: Router.PRESET_CUSTOM
 
   readonly property bool creating: ruleIndex < 0
   readonly property var rules: (service && service.rules) || []
@@ -76,17 +78,58 @@ Item {
     revision++
   }
 
-  function applyZoomPreset() {
-    var preset = Router.zoomPresetRule()
-    root.when = preset.when
-    root.advanced = true
-    root.targetKind = "zoom"
+  function applyRulePreset(id) {
+    root.presetValue = String(id || Router.PRESET_CUSTOM)
+    if (root.presetValue === Router.PRESET_CUSTOM) {
+      root.loadNewRule(root.seedUrl)
+      return
+    }
+
+    var preset = Router.rulePreset(root.presetValue)
+    if (!preset || !preset.rule) return
+    var rule = preset.rule
+
+    root.when = rule.when
+    root.advanced = rule.when === Router.WHEN_REGEX
+    root.commandText = String(rule.command || "")
+    root.wantPrivate = rule.private === true
+    root.testUrl = String(preset.testUrl || "")
+    if (rule.action === Router.ACTION_ZOOM) {
+      root.targetKind = "zoom"
+    } else if (rule.webapp) {
+      // Same order normalizeRule reads them in. Without this branch a preset
+      // that names a web app would land on "browser" and lose its destination
+      // without saying so.
+      root.targetKind = "webapp"
+      root.webappValue = resolveWebappValue(rule.webapp)
+    } else if (root.commandText) {
+      root.targetKind = "command"
+    } else {
+      root.targetKind = "browser"
+      root.browserValue = resolveBrowserValue(rule.browser, rule.profile)
+    }
+    termModel.clear()
+    var list = rule.terms || []
+    for (var i = 0; i < list.length; i++) termModel.append({ value: String(list[i]) })
+    if (termModel.count === 0) termModel.append({ value: "" })
+    root.revision++
+  }
+
+  function loadNewRule(seedUrl) {
+    // A new rule seeded from the link in hand: host is the choice people make
+    // nine times out of ten, and it is already filled in.
+    root.presetValue = Router.PRESET_CUSTOM
+    root.when = Router.WHEN_HOST
+    root.advanced = false
+    root.targetKind = "browser"
     root.commandText = ""
     root.wantPrivate = false
-    root.testUrl = "https://us02web.zoom.us/j/123456789?pwd=example"
+    root.testUrl = String(seedUrl || "")
     termModel.clear()
-    var list = preset.terms || []
-    for (var i = 0; i < list.length; i++) termModel.append({ value: String(list[i]) })
+    var host = seedUrl ? Router.displayHost(Router.parseUrl(seedUrl)) : ""
+    termModel.append({ value: host })
+    root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
+    root.webappValue = resolveWebappValue("")
     root.revision++
   }
 
@@ -161,17 +204,21 @@ Item {
     return options.length ? options[0].value : ""
   }
 
+  readonly property var presetOptions: Router.rulePresetOptions()
+
   // ------------------------------------------------------------- lifecycle
 
   function load(index, seedUrl) {
     root.ruleIndex = index === undefined ? -1 : index
     root.revision = 0
-    root.testUrl = String(seedUrl || "")
+    root.seedUrl = String(seedUrl || "")
+    root.testUrl = root.seedUrl
     termModel.clear()
 
     var existing = (index >= 0 && index < root.rules.length) ? root.rules[index] : null
 
     if (existing) {
+      root.presetValue = Router.PRESET_CUSTOM
       root.when = existing.when
       root.advanced = existing.when === Router.WHEN_REGEX
       var list = existing.terms || []
@@ -196,17 +243,7 @@ Item {
       root.webappValue = resolveWebappValue(existing.webapp)
       root.wantPrivate = existing.private === true
     } else {
-      // A new rule seeded from the link in hand: host is the choice people make
-      // nine times out of ten, and it is already filled in.
-      root.when = Router.WHEN_HOST
-      root.advanced = false
-      root.targetKind = "browser"
-      root.commandText = ""
-      root.wantPrivate = false
-      var host = seedUrl ? Router.displayHost(Router.parseUrl(seedUrl)) : ""
-      termModel.append({ value: host })
-      root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
-      root.webappValue = resolveWebappValue("")
+      root.loadNewRule(seedUrl)
     }
 
     if (termModel.count === 0) termModel.append({ value: "" })
@@ -392,15 +429,18 @@ Item {
         }
       }
 
-      Button {
-        visible: root.creating
-        text: "Use Zoom preset"
-        foreground: root.foreground
-        accent: root.accent
-        fontFamily: root.fontFamily
-        fontSize: Style.font.bodySmall
-        onClicked: root.applyZoomPreset()
-      }
+    }
+
+    Dropdown {
+      Layout.fillWidth: true
+      visible: root.creating
+      label: "Start from…"
+      options: root.presetOptions
+      value: root.presetValue
+      foreground: root.foreground
+      accent: root.accent
+      fontFamily: root.fontFamily
+      onChanged: function(value) { root.applyRulePreset(value) }
     }
 
     PanelSeparator { foreground: root.foreground }

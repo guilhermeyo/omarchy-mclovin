@@ -6,8 +6,14 @@ TestCase {
   name: "ZoomDirectRouting"
 
   function test_preset_is_a_portable_builtin_action() {
-    var rule = Router.zoomPresetRule()
+    var preset = Router.rulePreset(Router.PRESET_ZOOM_MEETING)
+    var rule = preset.rule
 
+    compare(preset.id, Router.PRESET_ZOOM_MEETING)
+    compare(preset.category, "Meetings")
+    verify(preset.label.indexOf("Zoom") !== -1)
+    verify(preset.description.length > 0)
+    verify(preset.testUrl.indexOf("https://") === 0)
     compare(rule.when, Router.WHEN_REGEX)
     compare(rule.action, Router.ACTION_ZOOM)
     compare(rule.terms.length, 1)
@@ -16,8 +22,30 @@ TestCase {
     verify(rule.browser === undefined)
   }
 
+  function test_preset_library_drives_selector_options() {
+    var presets = Router.rulePresets()
+    var options = Router.rulePresetOptions()
+
+    compare(options.length, presets.length + 1)
+    compare(options[0].value, Router.PRESET_CUSTOM)
+    compare(options[0].label, "Custom rule")
+    for (var i = 0; i < presets.length; i++) {
+      compare(options[i + 1].value, presets[i].id)
+      compare(options[i + 1].label, presets[i].label)
+    }
+    verify(Router.rulePreset("not-a-preset") === null)
+  }
+
+  function test_preset_library_returns_editable_copies() {
+    var first = Router.rulePreset(Router.PRESET_ZOOM_MEETING)
+    first.rule.terms[0] = "changed"
+
+    var second = Router.rulePreset(Router.PRESET_ZOOM_MEETING)
+    compare(second.rule.terms[0], Router.ZOOM_MEETING_PATTERN)
+  }
+
   function test_preset_matches_numbered_zoom_meetings() {
-    var rule = Router.zoomPresetRule()
+    var rule = Router.rulePreset(Router.PRESET_ZOOM_MEETING).rule
     var matches = [
       "https://zoom.us/j/123456789",
       "https://us02web.zoom.us/w/123-456-789?pwd=secret",
@@ -29,7 +57,7 @@ TestCase {
   }
 
   function test_preset_rejects_non_meeting_and_lookalike_urls() {
-    var rule = Router.zoomPresetRule()
+    var rule = Router.rulePreset(Router.PRESET_ZOOM_MEETING).rule
     var misses = [
       "http://zoom.us/j/123456789",
       "https://zoom.us/my/team-room",
