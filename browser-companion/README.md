@@ -1,11 +1,25 @@
 # Browser companion
 
-The companion catches numbered Zoom meeting links clicked inside a
-Chromium-family browser. Those clicks normally stay inside the browser and
-never reach mclovin's system HTTP handler.
+The companion catches links clicked inside a Chromium-family browser and hands
+them to mclovin. Those clicks normally stay inside the browser and never reach
+mclovin's system HTTP handler, because the browser owns that navigation.
 
-It is optional. Desktop links already work through the built-in Zoom-direct
-rule without it.
+It is optional, and it changes nothing on its own. Links opened by any other
+application already reach mclovin through the system handler.
+
+## What it catches
+
+Only links matching a rule whose **destination leaves the browser** — a web app,
+a built-in action, or a command. The native host reads mclovin's own config and
+serves those matchers, and nothing else.
+
+A rule naming a browser is deliberately left alone. A link already headed for the
+browser you are reading in should navigate the tab, not open a second one, and
+only the browser can do that.
+
+To send such a link anyway, right-click it and choose **Open link with mclovin**.
+That path is explicit, so it is not limited to watched rules: it routes whatever
+was clicked, and a link no rule claims reaches the picker.
 
 ## Layout
 
@@ -23,8 +37,8 @@ or entering a store package.
 
 ## Setup
 
-The mclovin panel offers setup after a Zoom-direct rule exists. From a terminal,
-the same action is:
+The mclovin panel offers setup once a rule with such a destination exists. From a
+terminal, the same action is:
 
 ```bash
 ./browser-companion/native/manage setup
@@ -53,12 +67,14 @@ and mclovin's local companion status.
 
 1. A content script listens for trusted `click` and `auxclick` events on HTTP
    and HTTPS pages.
-2. It ignores everything except numeric Zoom meeting paths on `zoom.us` or a
-   real subdomain.
+2. It ignores everything except links matching a matcher the native host served.
 3. The extension service worker validates the URL again and sends it through
    Chromium native messaging.
-4. The native host validates the caller and URL a third time, then invokes
-   `mclovin-open --zoom-direct`.
+4. The native host validates the caller and the URL again, then invokes
+   `mclovin-open`, which routes the link through the same rules every other
+   link on the system goes through. A rule resolving to the Zoom action reaches
+   `--zoom-direct` from there, where the meeting URL is checked once more before
+   it becomes a `zoommtg://` URI.
 5. If any bridge step fails, the service worker restores the original browser
    navigation.
 

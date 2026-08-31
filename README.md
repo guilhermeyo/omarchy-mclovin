@@ -199,16 +199,29 @@ handler opens the meeting in a chromeless Zoom webapp. If the protocol cannot
 launch, mclovin sends the original HTTPS link to the configured fallback
 browser instead.
 
-Links clicked inside a browser normally never reach the system HTTP handler.
-The optional Chromium companion under `browser-companion/` closes that gap: it
-catches a numbered Zoom meeting link clicked on **any HTTP or HTTPS site** and
-sends it to the same Zoom target. It asks for access to all sites because the
-source could be any calendar, chat, email, or document, but its content script
-only examines the destination of a link at click time and only sends validated
-`zoom.us` meeting URLs to mclovin. It does not request history, cookies, storage,
-or network access.
+Links clicked inside a browser normally never reach the system HTTP handler — the
+browser owns that navigation, and no XDG handler is ever asked. The optional
+Chromium companion under `browser-companion/` closes that gap.
 
-Once a Zoom-direct rule exists, the bar panel offers **Set up browser
+It catches links clicked on **any HTTP or HTTPS site** and hands them to mclovin,
+which routes them through the same rules it applies to every other link. It asks
+for access to all sites because the source could be any calendar, chat, email or
+document, but its content script reads nothing until a trusted click lands on a
+link, and then reads only that link's destination. It does not request history,
+cookies, storage, or network access.
+
+It does not watch every rule. Only the ones whose **destination leaves the
+browser** — a web app, a built-in action, a command — because a link already
+headed for the browser you are reading in should navigate the tab rather than
+open a second one, and only the browser can do that. The native host serves those
+matchers and nothing else: where a link ends up is decided on this side and never
+travels into the browser.
+
+To send a link the automatic path leaves alone, right-click it and choose **Open
+link with mclovin**. That gesture is explicit, so it routes whatever was clicked —
+a link no rule claims reaches the picker.
+
+Once a rule with such a destination exists, the bar panel offers **Set up browser
 companion**. It registers the local bridge and opens Chromium's install screen;
 Chromium itself still shows and controls the permission decision. Until a store
 listing exists, turn on Developer mode, choose **Load unpacked**, and select
@@ -222,8 +235,8 @@ The manager detects Chromium-family profiles already present under `~/.config`.
 It also has `install`, `uninstall`, `status`, and `open` commands; a browser name
 such as `chromium`, `chrome`, `brave`, `vivaldi`, or `edge` can be supplied when
 needed. The extension reports a local id/version/timestamp handshake so the
-panel can show **Ready**. If Zoom cannot be launched, it restores the browser
-navigation instead of dropping the click. Architecture, lifecycle, and release
+panel can show **Ready**. If the bridge cannot be reached, the browser navigation
+is restored instead of the click being dropped. Architecture, lifecycle, and release
 details live in [`browser-companion/README.md`](browser-companion/README.md).
 
 **Preview** is the part that makes the rest trustworthy:
