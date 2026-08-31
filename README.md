@@ -281,7 +281,8 @@ And two settings:
   picker. Leave it empty to always ask.
 - `webapp` — which browser gets `--app=` windows from `omarchy-launch-webapp`.
   Falls back to `fallback`, then to the first browser found. Webapps never open
-  the picker.
+  the picker. No screen writes this one yet: it is the one setting you have to
+  put in the file yourself.
 
 ## Importing from the mclovin CLI
 
@@ -371,20 +372,54 @@ So installing mclovin and making it the default moves your webapps to Chromium,
 even though nothing about your webapps changed. That is worth knowing before you
 switch: it is the one thing this plugin quietly takes away.
 
-mclovin does not edit that file, and this repository ships nothing that would.
-If you want your webapps back where they were, the whitelist is one line in
-`$(command -v omarchy-launch-webapp)`:
+`mclovin-webapp-fix` gives them back, by adding `*mclovin*` to that whitelist:
 
-```
-google-chrome* | brave* | microsoft-edge* | opera* | vivaldi* | helium*) ;;
+```bash
+~/.config/omarchy/plugins/io.github.guilhermeyo.mclovin/mclovin-webapp-fix
 ```
 
-Add `| io.github.guilhermeyo.mclovin*` before the `)` and webapps go through
-mclovin, which sends them to the `webapp` browser from your config without ever
-showing the picker. Two caveats: whether you can write that file depends on how
-Omarchy was installed — a checkout under `$HOME` is yours to edit, a packaged
-one under `/usr` is not — and `omarchy update` restores the original line either
-way, so treat it as a local preference rather than a setup step.
+Webapps then go through mclovin, which sends them to the `webapp` browser from
+your config without ever showing the picker. It is idempotent, keeps a
+`.before-mclovin.bak` next to the script it edits, and `--revert` undoes it.
+
+The pattern is a glob rather than the plugin's id because a pattern pinned to
+one id dies silently the day the id changes — which is exactly what happened to
+the mclovin CLI's version of this patch, and why `--check` exists.
+
+Run `--check` when webapps still land in the wrong browser. It deliberately does
+not ask whether the patch is present; it runs your real default handler id
+against the real pattern, resolves the handler binary, and confirms the `webapp`
+browser is installed and understands `--app=`:
+
+```
+$ mclovin-webapp-fix --check
+✔ Whitelist: omarchy-launch-webapp accepts mclovin
+✔ Default handler: io.github.guilhermeyo.mclovin.desktop matches the whitelist
+✔ Handler binary: …/io.github.guilhermeyo.mclovin/mclovin-open
+✔ Web app browser: brave-browser (brave)
+```
+
+Two caveats, both unavoidable, both stated because this edits a file the plugin
+does not own.
+
+Whether you can write it depends on how Omarchy was installed: a checkout under
+`$HOME` is yours, a packaged one under `/usr` belongs to the package manager.
+The script refuses with an explanation instead of a bare permission error.
+
+And `omarchy update` runs `git pull --ff-only`, which restores the original
+line. Install the hook to re-apply after every update:
+
+```bash
+install -Dm755 \
+  ~/.config/omarchy/plugins/io.github.guilhermeyo.mclovin/hooks/mclovin-webapp-fix.hook \
+  ~/.config/omarchy/hooks/post-update.d/mclovin-webapp-fix.hook
+```
+
+That same `pull --ff-only` is the price of a modified tracked file: when
+upstream edits `omarchy-launch-webapp` itself, the pull aborts and the update
+stops there. Nothing is lost and nothing is silent — run `mclovin-webapp-fix
+--revert`, update, and the hook re-applies. There is no pre-update hook that
+would avoid it.
 
 ## Uninstall
 
@@ -410,11 +445,16 @@ and profile already has an ordinary window, mclovin raises it instead of
 stacking a second one on top. Picking privately always opens: a fresh private
 window is the point of asking.
 
-Windows come from the Wayland foreign-toplevel protocol, not from asking the
-compositor, so this needs no `hyprctl` and works the same wherever the shell
-runs. A `--app=` window reports an id like `brave-web.whatsapp.com__-Default`,
-and that marker is what keeps a webapp from ever counting as the browser being
-open.
+Windows come from the Wayland foreign-toplevel protocol rather than from a
+compositor query, so recognising them needs no `hyprctl`. A `--app=` window
+reports an id like `brave-web.whatsapp.com__-Default`, and that doubled
+underscore is what keeps a web app from ever counting as the browser being open.
+
+Raising one does take `hyprctl`. The protocol's own `activate()` lands while
+the picker is up, because the shell holds the keyboard at that moment, and does
+nothing when a rule fires with no overlay on screen. So both are sent: the
+protocol first, then the dispatcher, in the two dialects a Lua config and a
+classic config speak.
 
 Two limits worth stating plainly, because both fail towards opening a window
 rather than towards the wrong one:
@@ -427,6 +467,29 @@ rather than towards the wrong one:
 - **Firefox does say**, in its title, so its profiles are told apart — and a
   private window is skipped, in any language, by requiring the brand segment to
   be exactly "Mozilla Firefox" rather than matching English wording.
+
+## Sending a link to a web app
+
+A rule can name an Omarchy web app instead of a browser — the third choice under
+**Open it in…** in the rule form. Links it catches land in the window that app
+already has open, and open one when it has none.
+
+This exists for WhatsApp, and for anything else that allows one session at a
+time. WhatsApp Web logs the open window out the moment a second one claims the
+session, so a share link that opened a second window did not merely duplicate
+the app, it broke the app that was already there.
+
+```json
+{ "when": "contains", "terms": ["whatsapp.com", "wa.me"], "webapp": "WhatsApp" }
+```
+
+The web app is matched by site, not by exact URL: the app sits on
+`web.whatsapp.com/` and the share link that wants it is on
+`api.whatsapp.com/send`. A `--app=` window cannot be navigated from outside, so
+the choice is that window or another one, and the open one wins.
+
+Nothing routes to a web app on its own. Without a rule the picker behaves
+exactly as before — web apps are never offered as rows.
 
 ## Notes
 

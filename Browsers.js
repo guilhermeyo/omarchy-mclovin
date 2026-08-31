@@ -323,10 +323,14 @@ function launchArgs(browserId, execString, url, profileDirectory, wantPrivate) {
 // be asked instead, which means recognising which window belongs to which
 // browser and profile.
 //
-// A `--app=` window reports a class like "brave-web.whatsapp.com__-Default".
-// That marker is what keeps a webapp from ever counting as the browser being
-// open, which it is not.
-function isAppWindowClass(cls) { return String(cls || "").indexOf("__-") !== -1 }
+// A `--app=` window names itself `<binary>-<host>_<path>-<Profile>`, with every
+// slash in the path collapsed to an underscore. The path always starts with
+// one, so the host is always followed by two: `--app=https://web.whatsapp.com/`
+// reports "brave-web.whatsapp.com__-Default" and `.../send` reports
+// "brave-web.whatsapp.com__send-Default". That doubled underscore is the
+// marker, and it is what keeps a web app from ever counting as the browser
+// being open, which it is not.
+function isAppWindowClass(cls) { return String(cls || "").indexOf("__") !== -1 }
 
 // Exact, not prefixed. "google-chrome".indexOf("google-chrome-beta") style
 // matching makes stable Chrome and Chrome Beta each other's windows, so asking
@@ -404,6 +408,105 @@ function findProfileToplevel(toplevels, browserId, profileName, profileCount) {
   return first
 }
 
+// --------------------------------------------------------------- web apps
+//
+// Omarchy installs a web app as a desktop entry whose Exec is
+// `omarchy-launch-webapp <url>`: a chromeless `--app=` window pinned to one
+// site. That URL is the only thing in the entry that says what the app is
+// *for*, which makes it the handle for "does this link belong in that app".
+//
+// The other two shapes in the wild are `omarchy-launch-or-focus-webapp
+// <pattern> <url>` and a hand-written `<browser> --app=<url>`; all three are
+// read the same way.
+function webappUrl(execString) {
+  var tokens = tokenizeExec(execString)
+  if (tokens.length === 0) return ""
+
+  var head = String(tokens[0] || "")
+  var launcher = head.indexOf("omarchy-launch-webapp") !== -1
+    || head.indexOf("omarchy-launch-or-focus-webapp") !== -1
+
+  for (var i = 1; i < tokens.length; i++) {
+    var t = String(tokens[i])
+    if (t.indexOf("--app=") === 0) return t.slice(6)
+    // A launcher's first URL-shaped argument. The or-focus variant puts a
+    // window pattern in front of it, so position alone cannot find it.
+    if (launcher && t.indexOf("://") !== -1) return t
+  }
+  return ""
+}
+
+// A desktop entry read as a web app, or null. `host` is left to the caller:
+// the URL parser lives in Router.js and this file imports nothing.
+function webappEntry(entry) {
+  if (!entry) return null
+  if (entry.noDisplay === true) return null
+  var id = String(entry.id || "")
+  if (!id) return null
+  var url = webappUrl(entry.execString)
+  if (!url) return null
+  return { id: id, name: String(entry.name || id), icon: entry.icon, url: url, entry: entry }
+}
+
+// The registered domain, near enough: the last two labels. This decides only
+// whether a link and a web app are "the same site" — api.whatsapp.com and
+// web.whatsapp.com are, and a share link lands on the first while the app sits
+// on the second. A wrong answer under a multi-label suffix like .co.uk costs a
+// suggested picker row, never a route: nothing here fires without a rule.
+function siteKey(host) {
+  var parts = String(host || "").toLowerCase().split(".")
+  if (parts.length <= 2) return parts.join(".")
+  return parts.slice(parts.length - 2).join(".")
+}
+
+// Whether a `--app=` window belongs to a site.
+//
+// Splitting the class on `-` does not work: both the binary (google-chrome) and
+// a host (my-site.com) carry dashes, so there is no field to take. What is
+// certain is where the host ends — at the `__` isAppWindowClass describes — so
+// the site is matched as the tail of the host: preceded by the `-` that closes
+// the binary or the `.` that makes it a subdomain, and followed by that pair.
+function isAppWindowOfSite(appId, site) {
+  var id = String(appId || "").toLowerCase()
+  var s = String(site || "").toLowerCase()
+  if (!s) return false
+
+  var at = id.indexOf(s + "__")
+  while (at > 0) {
+    var before = id.charAt(at - 1)
+    if (before === "-" || before === ".") return true
+    at = id.indexOf(s + "__", at + 1)
+  }
+  return false
+}
+
+// The open `--app=` window for a site, or null. Activated first, for the same
+// reason findProfileToplevel does it: the protocol carries no focus history, so
+// the window the compositor has active is the only "most recent" available.
+function findAppToplevel(toplevels, site) {
+  var list = toplevels || []
+  var first = null
+  for (var i = 0; i < list.length; i++) {
+    var top = list[i]
+    if (!top || !isAppWindowOfSite(top.appId, site)) continue
+    if (top.activated) return top
+    if (!first) first = top
+  }
+  return first
+}
+
+// `<browser> --app=<url>`. The flag precedes the entry's own arguments for the
+// same reason profile flags do, and the URL is never appended a second time:
+// it travels inside --app=, and a copy on the command line opens an ordinary
+// window next to the app one.
+function webappArgs(browserId, execString, url, profileDirectory) {
+  var argv = expandExec(execString, "")
+  if (argv.length === 0) return []
+  var flags = profileArgs(browserId, profileDirectory)
+  flags.push("--app=" + String(url || ""))
+  return [argv[0]].concat(flags, argv.slice(1))
+}
+
 // ------------------------------------------------------------------- browsers
 
 // DesktopEntry.categories is a QStringList, which reaches JS as an array-LIKE
@@ -431,6 +534,13 @@ function isBrowserEntry(entry, selfDesktopId) {
   if (!id) return false
   if (selfDesktopId && id === selfDesktopId) return false
   if (selfDesktopId && id === selfDesktopId.replace(/\.desktop$/, "")) return false
+
+  // Any mclovin is a router, not a browser — including the retired CLI, which
+  // installs mclovin.desktop with Categories=Network;WebBrowser and NoDisplay
+  // unset. Matching only selfDesktopId let it show up as a picker row and as a
+  // rule target, so a link could be routed into a second router carrying its
+  // own rules.toml.
+  if (id.toLowerCase().indexOf("mclovin") !== -1) return false
 
   var list = categoryList(entry.categories)
   for (var i = 0; i < list.length; i++) {

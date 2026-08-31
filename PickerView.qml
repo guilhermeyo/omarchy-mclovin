@@ -21,6 +21,45 @@ Item {
   property int selectedIndex: 0
   property bool remember: false
 
+  // The overlay is a fullscreen surface with a centred card, so the picker
+  // opens *underneath* wherever the pointer already happened to be. Without
+  // this, that row's containsMouse fires the moment the surface appears and
+  // takes the selection off the first row before the user has done anything:
+  // a pointer sitting still in the middle of the screen counted as a choice,
+  // and whichever browser landed under it won.
+  //
+  // Moving the pointer onto the first row instead is not an option. A Wayland
+  // client cannot warp the cursor at all — only the compositor can, and this
+  // plugin deliberately stopped calling out to one in 896d15c. So the pointer
+  // is left alone and hover stays inert until it actually travels.
+  property bool pointerArmed: false
+  property real pointerX: NaN
+  property real pointerY: NaN
+
+  function disarmPointer() {
+    root.pointerArmed = false
+    root.pointerX = NaN
+    root.pointerY = NaN
+  }
+
+  // Positions are compared in root's coordinate space, never the row's.
+  // Keyboard navigation scrolls rows under a stationary pointer, and a
+  // row-local coordinate would read that scroll as movement and hand the
+  // selection straight back to the mouse.
+  function notePointer(item, localX, localY, index) {
+    var p = item.mapToItem(root, localX, localY)
+    if (!root.pointerArmed) {
+      if (isNaN(root.pointerX)) {
+        root.pointerX = p.x
+        root.pointerY = p.y
+        return
+      }
+      if (Math.abs(p.x - root.pointerX) < 2 && Math.abs(p.y - root.pointerY) < 2) return
+      root.pointerArmed = true
+    }
+    root.selectedIndex = index
+  }
+
   // Separate from `remember` on purpose. Private is a property of this one
   // open; remembering is a property of every future one. Ticking both is
   // allowed and says so in the remember line, but neither implies the other.
@@ -105,6 +144,7 @@ Item {
     root.url = String(nextUrl || "")
     root.filterText = ""
     root.selectedIndex = 0
+    root.disarmPointer()
     // Both reset every time. A sticky toggle would quietly write a rule, or
     // quietly stop writing one, on the next unrelated link.
     root.remember = false
@@ -127,6 +167,10 @@ Item {
     var count = root.rows.length
     if (count === 0) return
     root.selectedIndex = (root.selectedIndex + delta + count) % count
+    // Arrow keys scroll rows past the pointer. Disarming here keeps the row
+    // that slides underneath it from snatching the selection back on the
+    // next keypress.
+    root.disarmPointer()
     list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
   }
 
@@ -326,10 +370,14 @@ Item {
           }
 
           MouseArea {
+            id: rowMouse
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse) root.selectedIndex = index
+            onContainsMouseChanged: if (containsMouse) root.notePointer(rowMouse, mouseX, mouseY, index)
+            onPositionChanged: function(mouse) { root.notePointer(rowMouse, mouse.x, mouse.y, index) }
+            // A click is always a deliberate choice, armed or not, and it acts
+            // on the row under the pointer rather than the highlighted one.
             onClicked: root.activate(index)
           }
         }
