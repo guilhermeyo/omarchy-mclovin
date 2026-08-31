@@ -84,8 +84,16 @@ Item {
   // Always writes all follow from it; everything else is the same screen.
   property string handlerScheme: ""
   readonly property bool choosingHandler: root.handlerScheme !== ""
-  readonly property var handlerRows: (choosingHandler && service)
-    ? service.handlersFor(root.handlerScheme) : []
+  // service.schemeHandlers is named here, not only reached through handlersFor().
+  // A binding re-evaluates on the properties it actually touched, and a function
+  // call touches none -- so a scan finishing after this screen opened would have
+  // left it listing nothing, with no way to tell that from "no application
+  // claims this".
+  readonly property var handlerRows: {
+    if (!root.choosingHandler || !service) return []
+    var all = service.schemeHandlers
+    return (all && all[root.handlerScheme]) || []
+  }
 
   readonly property var parsed: Router.parseUrl(root.url)
   readonly property string host: Router.displayHost(root.parsed)
