@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Chromium native-messaging bridge for the mclovin Zoom target."""
+
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import struct
+import subprocess
+import sys
+from urllib.parse import urlsplit
+
+
+EXTENSION_ID = "nplmoglnnfadaifhkpkmimcbgmfakfec"
+ALLOWED_ORIGIN = f"chrome-extension://{EXTENSION_ID}/"
+MAX_MESSAGE_BYTES = 64 * 1024
+MEETING_PATH = re.compile(r"^/(?:j|w)/[0-9][0-9-]*/?$|^/wc/join/[0-9][0-9-]*/?$")
+
+
+def state_path():
+    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    return state_home / "omarchy-mclovin" / "browser-companion.json"
+
+
+def zoom_meeting_url(value):
+    if not isinstance(value, str) or len(value) > 8192:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return ""
+    if parsed.scheme != "https":
+        return ""
+    if hostname != "zoom.us" and not hostname.endswith(".zoom.us"):
+        return ""
+    if parsed.username or parsed.password or port not in (None, 443):
+        return ""
+    if not MEETING_PATH.fullmatch(parsed.path):
+        return ""
+    return value
+
+
+def read_message(stream):
+    header = stream.read(4)
+    if len(header) != 4:
+        raise ValueError("missing message header")
+    size = struct.unpack("=I", header)[0]
+    if size > MAX_MESSAGE_BYTES:
+        raise ValueError("message is too large")
+    payload = stream.read(size)
+    if len(payload) != size:
+        raise ValueError("incomplete message")
+    return json.loads(payload.decode("utf-8"))
+
+
+def write_message(stream, message):
+    payload = json.dumps(message, separators=(",", ":")).encode("utf-8")
+    stream.write(struct.pack("=I", len(payload)))
+    stream.write(payload)
+    stream.flush()
+
+
+def record_connected(request):
+    version = request.get("version", "")
+    if not isinstance(version, str) or len(version) > 64:
+        version = ""
+    destination = state_path()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".json.new")
+    state = {
+        "version": 1,
+        "extensionId": EXTENSION_ID,
+        "extensionVersion": version,
+        "lastSeen": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+    temporary.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination)
+    return state
+
+
+def open_zoom(url):
+    helper = Path(__file__).resolve().parents[2] / "mclovin-open"
+    if not helper.is_file() or not os.access(helper, os.X_OK):
+        return False, "mclovin-open is missing or not executable"
+    try:
+        result = subprocess.run(
+            [str(helper), "--zoom-direct", url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, str(error)
+    return (True, "") if result.returncode == 0 else (False, "mclovin-open failed")
+
+
+def handle_request(request):
+    if not isinstance(request, dict):
+        raise ValueError("message must be an object")
+    message_type = request.get("type", "openZoomDirectly")
+    if message_type == "status":
+        state = record_connected(request)
+        return {"ok": True, "extensionId": EXTENSION_ID, "lastSeen": state["lastSeen"]}
+    if message_type != "openZoomDirectly":
+        raise ValueError("unknown message type")
+
+    url = zoom_meeting_url(request.get("url"))
+    if not url:
+        raise ValueError("not a Zoom meeting URL")
+    try:
+        record_connected(request)
+    except OSError:
+        # Status is useful but never allowed to block a meeting launch.
+        pass
+    ok, error = open_zoom(url)
+    response = {"ok": ok}
+    if error:
+        response["error"] = error
+    return response
+
+
+def main():
+    try:
+        if len(sys.argv) < 2 or sys.argv[1] != ALLOWED_ORIGIN:
+            raise ValueError("caller is not the mclovin extension")
+        response = handle_request(read_message(sys.stdin.buffer))
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        response = {"ok": False, "error": str(error)}
+
+    write_message(sys.stdout.buffer, response)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

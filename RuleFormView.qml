@@ -724,6 +724,16 @@ Item {
           wrapMode: Text.WordWrap
         }
 
+        Text {
+          Layout.fillWidth: true
+          visible: root.targetKind === "zoom"
+          text: "After you save, the mclovin panel offers an optional Chromium companion for Zoom links clicked inside any website."
+          color: root.faint
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
         PanelSeparator { foreground: root.foreground }
 
         // ------------------------------------------------------ preview

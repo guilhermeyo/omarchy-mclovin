@@ -37,6 +37,13 @@ Panel {
   readonly property var rules: service ? service.rules : []
   readonly property int todayCount: stats ? stats.count : 0
   readonly property int importCount: service ? service.importableCount : 0
+  readonly property bool hasZoomRule: service ? service.hasZoomRule : false
+  readonly property var browserCompanion: service ? service.browserCompanion : ({})
+  readonly property bool browserCompanionRegistered: service ? service.browserCompanionRegistered : false
+  readonly property bool browserCompanionConnected: service ? service.browserCompanionConnected : false
+  readonly property string browserCompanionPath: browserCompanion.extensionPath || ""
+  readonly property string browserCompanionStoreUrl: browserCompanion.storeUrl || ""
+  readonly property string browserCompanionError: service ? service.browserCompanionError : ""
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -90,6 +97,7 @@ Panel {
     if (opened && service) {
       service.refreshBrowsers()
       service.refreshHandler()
+      service.refreshBrowserCompanion()
     }
   }
 
@@ -399,6 +407,85 @@ Panel {
         glyph: "󰐕"
         label: "Add rule"
         onActivated: root.editRule(-1)
+      }
+
+      // A browser-internal click never reaches the system HTTP handler. Keep
+      // this offer out of everyone else's way: it appears only after someone
+      // has deliberately created a Zoom-direct rule.
+      PanelSeparator {
+        foreground: root.foreground
+        visible: root.hasZoomRule
+      }
+
+      Column {
+        width: parent.width
+        spacing: Style.space(6)
+        visible: root.hasZoomRule
+
+        PanelSectionHeader {
+          width: parent.width
+          text: "Zoom links inside Chromium"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: root.browserCompanionConnected
+            ? "Ready — clicked Zoom meeting links open directly."
+            : (root.browserCompanionRegistered
+              ? "The native bridge is ready. Load the companion extension to catch browser clicks."
+              : "Desktop links already work. The optional companion also catches Zoom links clicked on any website.")
+          color: root.browserCompanionConnected ? root.foreground : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
+        }
+
+        Text {
+          width: parent.width
+          visible: root.browserCompanionRegistered && !root.browserCompanionConnected
+            && root.browserCompanionStoreUrl === ""
+          text: "In Chromium: Developer mode → Load unpacked, then choose:\n" + root.browserCompanionPath
+          color: root.faint
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WrapAnywhere
+        }
+
+        Text {
+          width: parent.width
+          visible: root.browserCompanionError !== ""
+          text: root.browserCompanionError
+          color: root.urgentish
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
+        }
+
+        ActionRow {
+          visible: !root.browserCompanionConnected
+          glyph: root.browserCompanionRegistered ? "󰍹" : "󰏔"
+          label: root.browserCompanionStoreUrl !== ""
+            ? "Install browser companion"
+            : (root.browserCompanionRegistered ? "Open Chromium extension setup" : "Set up browser companion")
+          onActivated: {
+            if (!root.service) return
+            if (root.browserCompanionRegistered) root.service.openBrowserCompanionSetup()
+            else root.service.setupBrowserCompanion()
+          }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.browserCompanionConnected && root.browserCompanion.lastSeen
+          text: "Extension " + (root.browserCompanion.extensionVersion || "installed")
+            + " · last connected " + root.browserCompanion.lastSeen
+          color: root.faint
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
       }
 
       PanelSeparator { foreground: root.foreground }

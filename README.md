@@ -199,6 +199,33 @@ handler opens the meeting in a chromeless Zoom webapp. If the protocol cannot
 launch, mclovin sends the original HTTPS link to the configured fallback
 browser instead.
 
+Links clicked inside a browser normally never reach the system HTTP handler.
+The optional Chromium companion under `browser-companion/` closes that gap: it
+catches a numbered Zoom meeting link clicked on **any HTTP or HTTPS site** and
+sends it to the same Zoom target. It asks for access to all sites because the
+source could be any calendar, chat, email, or document, but its content script
+only examines the destination of a link at click time and only sends validated
+`zoom.us` meeting URLs to mclovin. It does not request history, cookies, storage,
+or network access.
+
+Once a Zoom-direct rule exists, the bar panel offers **Set up browser
+companion**. It registers the local bridge and opens Chromium's install screen;
+Chromium itself still shows and controls the permission decision. Until a store
+listing exists, turn on Developer mode, choose **Load unpacked**, and select
+`browser-companion/extension/`. The equivalent terminal command is:
+
+```bash
+./browser-companion/native/manage setup
+```
+
+The manager detects Chromium-family profiles already present under `~/.config`.
+It also has `install`, `uninstall`, `status`, and `open` commands; a browser name
+such as `chromium`, `chrome`, `brave`, `vivaldi`, or `edge` can be supplied when
+needed. The extension reports a local id/version/timestamp handshake so the
+panel can show **Ready**. If Zoom cannot be launched, it restores the browser
+navigation instead of dropping the click. Architecture, lifecycle, and release
+details live in [`browser-companion/README.md`](browser-companion/README.md).
+
 **Preview** is the part that makes the rest trustworthy:
 
 - *"A link like https://github.com/acme/… would open in Chromium · Work."*
@@ -343,6 +370,8 @@ omarchy-shell $ID refresh                    # re-read browsers and the default 
 omarchy-shell $ID importRules                # import from the CLI's rules.toml
 omarchy-shell $ID becomeDefault              # register as the http/https handler
 omarchy-shell $ID restoreDefault firefox     # hand the handler back to a real browser
+omarchy-shell $ID setupBrowserCompanion      # register/open the optional Chromium companion
+omarchy-shell $ID refreshBrowserCompanion    # refresh companion status in the panel
 omarchy-shell $ID togglePanel                # open the bar drop-down (bind a key to this)
 ```
 
@@ -438,8 +467,14 @@ would avoid it.
 ## Uninstall
 
 ```bash
+./browser-companion/native/manage uninstall
 omarchy plugin remove io.github.guilhermeyo.mclovin
 ```
+
+Remove the Chromium extension from `chrome://extensions` as well if the
+companion was installed. The manager command removes only mclovin's native-host
+manifests and local connection status; it does not modify unrelated browser
+configuration.
 
 Point the system at a real browser again first, otherwise links have no handler:
 

@@ -1,6 +1,8 @@
 # Editor / OS noise
 .DS_Store
 *.swp
+__pycache__/
+*.pyc
 
 # Demo captures — the previews at the repo root are the artifacts
 demo/shots/

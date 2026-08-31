@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "mclovin — Open Zoom directly",
+  "version": "0.1.0",
+  "description": "Send Zoom meeting links clicked on any website directly to mclovin.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5iaM/IiiYJApqL8Fsjc+jUkLdBQZMXn+SLHY6ogQmAIhmYGc2pqDFvEqXITGF+xzntTpAEfjY2Lfc1Ptggqbs41X8r21w3hIalldYVLKm6NUQh1aBBZfw8rTMjDm8mWLfYJunwWHdNPst43zdHS0y6pIc0ru4c7Y9iWoG+AEboCghPHftkbMaSQFsroHZlxYQb8IvqGMunflKpPRG5wyrSd4/LpZm0VpJw5MbwsTLV6TxvQH0UaLGFFH1t8IdXJzwzn2gnYdOJ7bXB7GQaC3JQYkJhe3TBW4wCh55lJvnKV3YtcE36SbHWDedfIAtc5cllUM8Avhp9R/LTJyM1zvJwIDAQAB",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "zoom-links.js",
+        "content.js"
+      ],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start"
+    }
+  ]
+}
