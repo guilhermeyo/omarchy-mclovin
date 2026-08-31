@@ -91,10 +91,18 @@ def read_flags(browser):
 
 
 def write_flags(browser, lines):
-    path = flags_path(browser)
-    temporary = path.with_suffix(path.suffix + ".new")
+    # Write THROUGH the link, not over it. rename(2) replaces the link itself,
+    # so a flags file stowed in from a dotfiles repo came out of an install as a
+    # plain file with the tracked copy left behind untouched -- and the next
+    # restow took the --load-extension entry away with it. Reading already
+    # followed the link, so only the write disagreed.
+    #
+    # resolve() rather than a is_symlink() branch: it is a no-op on a plain path
+    # and still gives an absolute target for a dangling link.
+    target = flags_path(browser).resolve()
+    temporary = target.with_suffix(target.suffix + ".new")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    temporary.replace(target)
 
 
 def extension_loaded(browser):
@@ -135,7 +143,7 @@ def load_extension(browser):
     else:
         lines.append(FLAG + wanted)
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.resolve().parent.mkdir(parents=True, exist_ok=True)
     write_flags(browser, lines)
     return True
 

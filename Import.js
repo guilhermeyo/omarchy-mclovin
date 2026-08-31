@@ -168,38 +168,39 @@ function resolveImported(imported, browsers) {
   return out
 }
 
-// How many of the CLI's rules the config does not already carry. Compared on
-// the matcher alone: a rule for the same pattern pointing somewhere else is an
-// edit the user made here, not something to re-import.
-function countNewRules(config, imported, browsers) {
+// The rules in the CLI's file that this config does not already carry, in file
+// order. Compared on the matcher alone: a rule for the same pattern pointing
+// somewhere else is an edit the user made here, not something to re-import.
+//
+// One function, because the panel's label and the import's effect have to be
+// the same set. They were written twice and drifted: the count excluded rules
+// whose matcher was already present, while the merge DROPPED those same rules
+// from the config and replaced them with the CLI's version. The panel offered
+// "Import 2 new rules" and quietly overwrote five edited ones.
+function newRules(config, imported, browsers) {
   var current = Router.normalizeConfig(config)
   var have = {}
   for (var i = 0; i < current.rules.length; i++) have[Router.ruleKey(current.rules[i])] = true
 
   var incoming = resolveImported(imported, browsers)
-  var count = 0
+  var out = []
   for (var j = 0; j < incoming.length; j++) {
-    if (!have[Router.ruleKey(incoming[j])]) count++
+    if (!have[Router.ruleKey(incoming[j])]) out.push(incoming[j])
   }
-  return count
+  return out
+}
+
+function countNewRules(config, imported, browsers) {
+  return newRules(config, imported, browsers).length
 }
 
 // Merge an imported rules.toml into an existing config. Imported rules land
 // first and in file order, because mclovin's router is also first-match-wins and
-// the user already ordered them specific-to-general.
+// the user already ordered them specific-to-general. Nothing already in the
+// config is touched.
 function mergeImported(config, imported, browsers) {
   var next = Router.normalizeConfig(config)
-  var incoming = resolveImported(imported, browsers)
-
-  var seen = {}
-  for (var j = 0; j < incoming.length; j++) seen[Router.ruleKey(incoming[j])] = true
-
-  var kept = []
-  for (var k = 0; k < next.rules.length; k++) {
-    if (!seen[Router.ruleKey(next.rules[k])]) kept.push(next.rules[k])
-  }
-
-  next.rules = incoming.concat(kept)
+  next.rules = newRules(config, imported, browsers).concat(next.rules)
 
   // `fallback_browser` is deliberately NOT imported. In the CLI it is an
   // emergency backstop used only when the picker cannot open; here it means

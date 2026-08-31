@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../Router.js" as Router
+import "../Import.js" as Import
 
 TestCase {
   name: "ZoomDirectRouting"
@@ -129,6 +130,74 @@ TestCase {
     }
     verify(sawWebapp)
     verify(sawAction)
+  }
+
+  // The panel's label and the import's effect have to be the same set. They were
+  // written twice and drifted: the count excluded rules whose matcher the config
+  // already carried, while the merge dropped exactly those and replaced them
+  // with the CLI's version -- so "Import 1 new rule" silently overwrote an
+  // edited one.
+  //
+  // Imported rules are written in the CLI's own shape (`match`, `matchRegex`,
+  // a browser NAME), which is what resolveImported reads and Router migrates.
+  // Handing these tests the normalised shape instead makes every rule resolve
+  // to nothing and the assertions pass against an empty set.
+  function test_import_adds_what_it_counted_and_touches_nothing_else() {
+    var config = {
+      rules: [
+        // Same matcher the CLI has, pointed somewhere else on purpose: this is
+        // an edit made here, and importing must not undo it.
+        { when: "contains", terms: ["example.com"], browser: "brave-browser", profile: "Personal" },
+        { when: "contains", terms: ["only-here"], browser: "brave-browser" },
+      ],
+    }
+    var imported = {
+      rules: [
+        { match: ["example.com"], browser: "Chromium" },
+        { match: ["from-the-cli"], browser: "Chromium" },
+      ],
+      fallback: "",
+      skipped: 0,
+    }
+    var browsers = [{ id: "chromium", name: "Chromium" }, { id: "brave-browser", name: "Brave" }]
+
+    compare(Import.countNewRules(config, imported, browsers), 1)
+
+    var merged = Import.mergeImported(config, imported, browsers)
+    compare(merged.rules.length, 3, "one added to the two that were already there")
+
+    var byTerm = {}
+    for (var i = 0; i < merged.rules.length; i++) byTerm[merged.rules[i].terms[0]] = merged.rules[i]
+
+    // The edit survives, pointing where the user pointed it.
+    compare(byTerm["example.com"].browser, "brave-browser")
+    compare(byTerm["example.com"].profile, "Personal")
+    // The untouched rule survives.
+    verify(byTerm["only-here"] !== undefined)
+    // And the genuinely new one arrived, resolved from its CLI browser name.
+    compare(byTerm["from-the-cli"].browser, "chromium")
+  }
+
+  function test_importing_twice_changes_nothing_the_second_time() {
+    var imported = {
+      rules: [
+        { match: ["example.com"], browser: "Chromium" },
+        { match: ["second.example"], browser: "Chromium" },
+      ],
+      fallback: "",
+      skipped: 0,
+    }
+    var browsers = [{ id: "chromium", name: "Chromium" }]
+
+    // Non-vacuous on purpose: assert the first import actually brought both
+    // rules across before asserting the second brings nothing.
+    compare(Import.countNewRules({ rules: [] }, imported, browsers), 2)
+    var once = Import.mergeImported({ rules: [] }, imported, browsers)
+    compare(once.rules.length, 2)
+
+    compare(Import.countNewRules(once, imported, browsers), 0)
+    var twice = Import.mergeImported(once, imported, browsers)
+    compare(twice.rules.length, 2)
   }
 
   function test_unknown_action_without_another_target_is_dropped() {
