@@ -67,9 +67,18 @@ Item {
 
   readonly property var rules: config.rules || []
   readonly property string fallbackBrowser: config.fallback || ""
-  readonly property bool hasZoomRule: {
+  // Whether any rule sends links somewhere the browser cannot reach on its own.
+  //
+  // This is the same set the native host serves to the extension --
+  // INTERCEPTABLE = ("webapp", "action", "command") in mclovin-native-host -- and
+  // the two must agree. It used to ask only for a Zoom action, from when Zoom was
+  // the only thing the companion could open; a rule sending WhatsApp links to its
+  // web app made the companion work while the panel went on hiding it.
+  readonly property bool hasCompanionRule: {
     for (var i = 0; i < root.rules.length; i++) {
-      if (root.rules[i] && root.rules[i].action === Router.ACTION_ZOOM) return true
+      var rule = root.rules[i]
+      if (!rule) continue
+      if (rule.webapp || rule.action || rule.command) return true
     }
     return false
   }
@@ -852,6 +861,7 @@ Item {
         script: root.handlerScript,
         browsers: root.browsers.length,
         webapps: root.webapps.length,
+        hasCompanionRule: root.hasCompanionRule,
         rules: root.rules.length,
         fallback: root.fallbackBrowser,
         today: root.stats.count,

@@ -37,7 +37,7 @@ Panel {
   readonly property var rules: service ? service.rules : []
   readonly property int todayCount: stats ? stats.count : 0
   readonly property int importCount: service ? service.importableCount : 0
-  readonly property bool hasZoomRule: service ? service.hasZoomRule : false
+  readonly property bool hasCompanionRule: service ? service.hasCompanionRule : false
   readonly property var browserCompanion: service ? service.browserCompanion : ({})
   readonly property bool browserCompanionRegistered: service ? service.browserCompanionRegistered : false
   readonly property bool browserCompanionConnected: service ? service.browserCompanionConnected : false
@@ -414,17 +414,17 @@ Panel {
       // has deliberately created a Zoom-direct rule.
       PanelSeparator {
         foreground: root.foreground
-        visible: root.hasZoomRule
+        visible: root.hasCompanionRule
       }
 
       Column {
         width: parent.width
         spacing: Style.space(6)
-        visible: root.hasZoomRule
+        visible: root.hasCompanionRule
 
         PanelSectionHeader {
           width: parent.width
-          text: "Zoom links inside Chromium"
+          text: "Links clicked inside Chromium"
           foreground: root.foreground
           fontFamily: root.fontFamily
         }
@@ -432,10 +432,10 @@ Panel {
         Text {
           width: parent.width
           text: root.browserCompanionConnected
-            ? "Ready — clicked Zoom meeting links open directly."
+            ? "Ready — links your rules send out of the browser are caught here too."
             : (root.browserCompanionRegistered
-              ? "The native bridge is ready. Load the companion extension to catch browser clicks."
-              : "Desktop links already work. The optional companion also catches Zoom links clicked on any website.")
+              ? "The bridge is ready. Close the browser and open it again to load the extension."
+              : "Links from other apps already work. The optional companion also catches the ones clicked inside a browser.")
           color: root.browserCompanionConnected ? root.foreground : root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -446,7 +446,10 @@ Panel {
           width: parent.width
           visible: root.browserCompanionRegistered && !root.browserCompanionConnected
             && root.browserCompanionStoreUrl === ""
-          text: "In Chromium: Developer mode → Load unpacked, then choose:\n" + root.browserCompanionPath
+          // Setup adds the extension to the browser's own --load-extension list,
+          // the way Omarchy installs its own, so there is nothing to click in
+          // Chromium -- but flags are read once, at startup.
+          text: "Close the browser completely and open it again."
           color: root.faint
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
