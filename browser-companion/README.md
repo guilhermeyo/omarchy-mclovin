@@ -1,5 +1,18 @@
 # Browser companion
 
+The idea, and the first working version of it, are [@jondkinney](https://github.com/jondkinney)'s
+— see [#3](https://github.com/guilhermeyo/omarchy-mclovin/pull/3).
+
+Worth saying why that matters rather than just crediting it. mclovin is an XDG
+handler: it gets every link the *system* is asked to open, and nothing else. A
+link clicked inside a browser was written off here as permanently out of reach,
+because the browser owns that navigation and no handler is ever consulted. That
+was true, and it is the ceiling every router of this kind runs into.
+
+Catching the click in the page is the one place the decision still exists. Zoom
+was what that PR set out to solve; it turned out to be the missing half of the
+whole plugin, and every rule uses it now.
+
 The companion catches links clicked inside a Chromium-family browser and hands
 them to mclovin. Those clicks normally stay inside the browser and never reach
 mclovin's system HTTP handler, because the browser owns that navigation.
@@ -41,13 +54,36 @@ The mclovin panel offers setup once a rule with such a destination exists. From 
 terminal, the same action is:
 
 ```bash
-./browser-companion/native/manage setup
+./browser-companion/native/manage install [chromium|chrome|brave|vivaldi|edge]
 ```
 
-With no Chrome Web Store URL configured, setup opens `chrome://extensions`.
-Enable Developer mode, choose **Load unpacked**, and select the printed
-`browser-companion/extension/` directory. Once loaded, the extension performs a
-local handshake and the mclovin panel changes to **Ready**.
+That does two things per browser:
+
+1. writes the native-messaging manifest under its `NativeMessagingHosts/`
+   directory, pointing at this host by absolute path and allowing exactly the
+   extension's own origin;
+2. adds `browser-companion/extension/` to the browser's `--load-extension` list
+   in `~/.config/<browser>-flags.conf`.
+
+The second is how Omarchy installs its own extensions — `copy-url`, `yt-dlp`,
+`whatsapp-slim` all arrive on that same line. An extension named on the command
+line installs as `COMMAND_LINE` rather than unpacked, which means **no Chrome Web
+Store listing and no Developer mode**, and none of the "disable developer mode
+extensions" prompt Chromium shows on every start otherwise.
+
+The list is appended to, never rewritten: Omarchy's own extensions are on it, and
+`uninstall` takes only this one path back out and leaves the rest alone. Both are
+covered by tests, because getting it wrong would silently uninstall somebody
+else's extensions.
+
+Flags are read once, when the browser process starts, so **close the browser
+completely and open it again**. Then the extension performs a local handshake and
+the mclovin panel changes to **Ready**.
+
+If a browser has no flags file of its own — or you would rather not have this
+edit your browser's command line — load `browser-companion/extension/` by hand
+from `chrome://extensions` with Developer mode on. Everything works the same; only
+the prompt on each start is the difference.
 
 Lifecycle commands:
 

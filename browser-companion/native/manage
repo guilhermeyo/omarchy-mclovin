@@ -17,32 +17,45 @@ HOST = "io.github.guilhermeyo.mclovin"
 LEGACY_HOSTS = ("io.github.guilhermeyo.mclovin.zoom",)
 EXTENSION_ID = "nplmoglnnfadaifhkpkmimcbgmfakfec"
 STORE_URL = ""
+# `flags` is the file the browser reads its command line from at startup, under
+# ~/.config. Chromium-family launchers on Linux read one -- Brave and Chrome
+# through a shell wrapper, Arch's chromium inside the binary itself -- and it is
+# how Omarchy installs its own extensions. A browser with no entry here is still
+# fully supported; its extension is loaded by hand instead.
 BROWSERS = {
     "chromium": {
         "config": "chromium",
         "programs": ["chromium"],
+        "flags": "chromium-flags.conf",
     },
     "chrome": {
         "config": "google-chrome",
         "programs": ["google-chrome-stable", "google-chrome"],
+        "flags": "chrome-flags.conf",
     },
     "chrome-testing": {
         "config": "google-chrome-for-testing",
         "programs": ["google-chrome-for-testing"],
+        "flags": "",
     },
     "brave": {
         "config": "BraveSoftware/Brave-Browser",
         "programs": ["brave", "brave-browser"],
+        "flags": "brave-flags.conf",
     },
     "vivaldi": {
         "config": "vivaldi",
         "programs": ["vivaldi-stable", "vivaldi"],
+        "flags": "vivaldi-flags.conf",
     },
     "edge": {
         "config": "microsoft-edge",
         "programs": ["microsoft-edge-stable", "microsoft-edge"],
+        "flags": "microsoft-edge-flags.conf",
     },
 }
+
+FLAG = "--load-extension="
 
 
 def config_home():
@@ -60,6 +73,97 @@ def native_host():
 
 def extension_path():
     return (Path(__file__).resolve().parent.parent / "extension").resolve()
+
+
+def flags_path(browser):
+    name = BROWSERS[browser].get("flags") or ""
+    return config_home() / name if name else None
+
+
+def read_flags(browser):
+    path = flags_path(browser)
+    if not path or not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+
+def write_flags(browser, lines):
+    path = flags_path(browser)
+    temporary = path.with_suffix(path.suffix + ".new")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def extension_loaded(browser):
+    """Whether this browser is set to load the extension at startup."""
+    wanted = str(extension_path())
+    for line in read_flags(browser) or []:
+        if line.startswith(FLAG) and wanted in line.split("=", 1)[1].split(","):
+            return True
+    return False
+
+
+def load_extension(browser):
+    """Add the extension to the browser's own --load-extension list.
+
+    The same mechanism Omarchy uses for its own extensions, and the reason this
+    needs neither a Chrome Web Store listing nor Developer mode: an extension
+    named on the command line is installed as COMMAND_LINE rather than unpacked,
+    so Chromium does not nag about it on every start.
+
+    Appending to the existing list rather than replacing it matters -- Omarchy
+    puts its own extensions on that same line, and a rewrite would silently
+    uninstall them.
+    """
+    path = flags_path(browser)
+    if not path:
+        return False
+    lines = read_flags(browser)
+    if lines is None:
+        lines = []
+    if extension_loaded(browser):
+        return False
+
+    wanted = str(extension_path())
+    for index, line in enumerate(lines):
+        if line.startswith(FLAG):
+            lines[index] = line.rstrip(",") + "," + wanted
+            break
+    else:
+        lines.append(FLAG + wanted)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_flags(browser, lines)
+    return True
+
+
+def unload_extension(browser):
+    """Take only our own path back out, leaving every other extension alone."""
+    lines = read_flags(browser)
+    if lines is None:
+        return False
+
+    wanted = str(extension_path())
+    changed = False
+    out = []
+    for line in lines:
+        if not line.startswith(FLAG):
+            out.append(line)
+            continue
+        kept = [p for p in line.split("=", 1)[1].split(",") if p and p != wanted]
+        if len(kept) != len(line.split("=", 1)[1].split(",")):
+            changed = True
+        # A flags file with an empty --load-extension= is a browser that refuses
+        # to start, so the whole line goes when nothing is left on it.
+        if kept:
+            out.append(FLAG + ",".join(kept))
+
+    if changed:
+        write_flags(browser, out)
+    return changed
 
 
 def manifest_path(browser, host=HOST):
@@ -115,6 +219,7 @@ def install(names):
     for browser in selected:
         write_json(manifest_path(browser), manifest)
         drop_legacy(browser)
+        load_extension(browser)
     return selected
 
 
@@ -124,6 +229,7 @@ def uninstall(names):
     for browser in selected:
         destination = manifest_path(browser)
         drop_legacy(browser)
+        unload_extension(browser)
         if destination.is_file():
             destination.unlink()
             removed.append(browser)
@@ -165,6 +271,7 @@ def status():
         "extensionId": EXTENSION_ID,
         "extensionPath": str(extension_path()),
         "registeredBrowsers": registered,
+        "loadingBrowsers": [name for name in BROWSERS if extension_loaded(name)],
         "invalidBrowsers": invalid,
         "connected": connected,
         "extensionVersion": connection.get("extensionVersion", "") if connected else "",
