@@ -57,7 +57,7 @@ same.
 ## Review test
 
 1. Install mclovin and add a rule whose destination is a web app or an
-   application — its Zoom-direct preset is the quickest.
+   application — its "Zoom meeting" preset is the quickest.
 2. Run `browser-companion/native/manage install chromium`.
 3. Install the extension and confirm mclovin reports the handshake.
 4. From an unrelated page, click an anchor matching that rule and confirm the

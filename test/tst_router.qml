@@ -4,7 +4,7 @@ import "../Router.js" as Router
 import "../Import.js" as Import
 
 TestCase {
-  name: "ZoomDirectRouting"
+  name: "RouterAndImport"
 
   function test_preset_is_a_portable_builtin_action() {
     var preset = Router.rulePreset(Router.PRESET_ZOOM_MEETING)

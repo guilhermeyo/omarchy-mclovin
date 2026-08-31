@@ -186,19 +186,31 @@ them matching is enough, so `example.com` and `example.org` live in one rule ins
 two.
 
 **Open it in…** is a browser — picked from the same browser·profile list the
-picker shows, never a field you have to guess the spelling of — a command with
-`{url}` in it, or the built-in **Zoom directly** target.
+picker shows, never a field you have to guess the spelling of — a web app, a
+command with `{url}` in it, or **a native app**.
 
 **Start from…** is a preset library above the form. **Custom rule** keeps the
-ordinary editor defaults; **Zoom meeting → Zoom directly** fills the editable
-form with a narrow rule for numbered Zoom meeting links and selects **Zoom
-directly**. New presets are data-driven entries in `Router.js`, so the library
-can grow without adding one-off controls to the form. The Zoom target changes
-an ordinary `https://…zoom.us/j/…` link into `zoommtg://` before a browser opens. A native
-Zoom installation can own that protocol; on stock Omarchy its registered
-handler opens the meeting in a chromeless Zoom webapp. If the protocol cannot
-launch, mclovin sends the original HTTPS link to the configured fallback
-browser instead.
+ordinary editor defaults; **Zoom meeting → its native app** fills the editable
+form with a narrow rule for numbered Zoom meeting links. New presets are
+data-driven entries in `Router.js`, so the library can grow without adding
+one-off controls to the form.
+
+**A native app** hands the link to the desktop application that owns the site it
+is on, by rewriting it into that application's own URI — an ordinary
+`https://…zoom.us/j/…` becomes `zoommtg://…` before a browser opens.
+
+The rewriting is a table, and it has to be. Nothing derives
+`zoommtg://zoom.us/join?action=join&confno=1842` from `zoom.us/j/1842` except
+knowing Zoom, any more than it derives `spotify:track:X` from
+`open.spotify.com/track/X`: each is its own vendor's convention. So `Router.js`
+holds the sites and the schemes they claim, `mclovin-open` holds the conversions
+under the same ids, and adding a site is one entry in each. The form says which
+it would use for the link in hand, or says plainly that it knows none for links
+like that.
+
+Only Zoom is in the table today, because a conversion nobody has watched open a
+real application is a guess. If the protocol cannot launch, mclovin sends the
+original HTTPS link to the configured fallback browser instead.
 
 Links clicked inside a browser normally never reach the system HTTP handler — the
 browser owns that navigation, and no XDG handler is ever asked. The optional
@@ -599,11 +611,18 @@ treated as no choice, and the question is asked again rather than sent to
 something that is not there.
 
 ```bash
-omarchy-shell io.github.guilhermeyo.mclovin status | jq '{zoomHandlers, chosenZoomHandler}'
+omarchy-shell io.github.guilhermeyo.mclovin status | jq .nativeApps
 ```
 
-is where to look when a link lands somewhere unexpected: how many applications
-claim the scheme, and which one was picked.
+is where to look when a link lands somewhere unexpected. For each site with a
+native application it reports the scheme, how many things claim it, and which
+one was chosen:
+
+```json
+{ "zoom": { "scheme": "zoommtg", "claimedBy": 2, "chosen": "" } }
+```
+
+`claimedBy: 2` with `chosen: ""` is the state that opens the picker.
 
 ## Credits
 

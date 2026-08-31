@@ -69,7 +69,12 @@ class NativeHostTest(unittest.TestCase):
                 # through the form -- so a config older than the form still
                 # carries these, and Router still reads them.
                 {"match": ["legacy-plain.test"], "webapp": "X"},
+                # Both spellings of the native-app action. Router reads each,
+                # so a rule this file skips is one the panel says it is watching
+                # and the extension is not -- which is what renaming the action
+                # to `native` caused until this test existed.
                 {"matchRegex": "^https://legacy-regex", "action": "zoom"},
+                {"when": "host", "terms": ["native-action.test"], "action": "native"},
                 # No terms at all: Router drops it, so the host must too.
                 {"when": "host", "terms": [], "webapp": "X"},
                 # An action Router does not define. It drops the rule entirely,
@@ -95,8 +100,9 @@ class NativeHostTest(unittest.TestCase):
         self.assertEqual(by_terms[("migrates.test",)], "contains")
         self.assertEqual(by_terms[("legacy-plain.test",)], "contains")
         self.assertEqual(by_terms[("^https://legacy-regex",)], "regex")
+        self.assertEqual(by_terms[("native-action.test",)], "host")
         self.assertNotIn(("unknown-action.test",), by_terms)
-        self.assertEqual(len(served), 6)
+        self.assertEqual(len(served), 7)
 
         # A browser destination is never watched: clicking a link that is already
         # going to the browser you are reading in should navigate the tab.

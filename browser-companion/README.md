@@ -109,8 +109,8 @@ and mclovin's local companion status.
 4. The native host validates the caller and the URL again, then invokes
    `mclovin-open`, which routes the link through the same rules every other
    link on the system goes through. A rule resolving to the Zoom action reaches
-   `--zoom-direct` from there, where the meeting URL is checked once more before
-   it becomes a `zoommtg://` URI.
+   `--native=<site>` from there, where the URL is checked once more before it
+   becomes that application's own URI.
 5. If any bridge step fails, the service worker restores the original browser
    navigation.
 
