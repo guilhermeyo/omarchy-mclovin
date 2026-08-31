@@ -311,56 +311,221 @@ browser.
 ## Configuration
 
 Rules live in `~/.config/omarchy-mclovin/config.json`. The plugin watches the
-file, so editing it by hand takes effect immediately.
+file, so an edit takes effect without a restart. The rule form writes it for
+you; it is documented because the file is yours and editing it by hand still
+works.
 
-The form writes this for you; it is documented because the file is yours and
-editing it by hand still works — the plugin watches it and reloads.
+Every read goes through `normalizeConfig` in `Router.js`, which rebuilds the
+config from the keys below rather than patching what it found. A key that is
+not listed here is not an error and is not a warning — it is simply not read,
+and it disappears from the file the next time anything saves.
+
+### Top-level keys
+
+| Key | What it does |
+|---|---|
+| `version` | Rewritten to `1` on every save. Whatever is in the file is ignored. |
+| `fallback` | Desktop entry id of the browser that takes links no rule matches, instead of the picker. Empty means always ask. A link asked for privately never falls back — that one always reaches the picker. |
+| `fallbackProfile` | Profile name used with `fallback`. Read only when `fallback` is set. |
+| `webapp` | Desktop entry id of the browser that gets `--app=` windows from `omarchy-launch-webapp` and from `webapp` rules. Empty falls back to `fallback`, then to the first installed browser. It has to be a Chromium-family browser: `--app=` is a Chromium flag, and Gecko handed one opens nothing at all. |
+| `handlers` | Scheme → **absolute path** of a desktop entry, for a scheme more than one application claims. Keys are lowercased; an entry whose key is not a bare scheme name, or whose value is not an absolute path, is dropped. |
+| `rules` | The list. Stored narrowest-first — see [Which rule wins](#which-rule-wins). |
+
+### A rule
+
+Two halves, both required. A rule with no terms, or with no destination, is
+dropped on load rather than kept as a rule that can never fire.
+
+`terms` is a list, and a bare string is accepted and wrapped in one. Entries are
+trimmed, and empty ones are removed. Terms are OR'd: any one of them matching is
+enough, so `example.com` and `example.org` live in one rule.
+
+#### `when` — the four matchers
+
+All four are case-insensitive.
+
+| `when` | Matches when | Compared against |
+|---|---|---|
+| `host` | the link's host is exactly the term, `www.` stripped from both sides | the host only |
+| `startsWith` | the link begins with the term, **or** the link with its `scheme://` removed begins with the term | the whole link |
+| `contains` | the term appears anywhere in the link | the whole link, scheme and query included |
+| `regex` | the JavaScript regular expression matches anywhere in the link | the whole link |
+
+Three consequences that catch people:
+
+- **`host` is the host, not the site.** `github.com` does not catch
+  `gist.github.com`. Use `contains github.com` for that.
+- **`startsWith` does not strip `www.`**, though `host` does. A term of
+  `youtube.com/watch` misses `https://www.youtube.com/watch`. Add the `www.`
+  spelling as a second term, or use `contains`.
+- **`contains` sees the query string.** `contains github.com` also catches
+  `https://elsewhere.example/?redirect=https://github.com/acme` and
+  `https://github.com.phish.example/`. `host` is the matcher that cannot be
+  fooled that way.
+
+A `regex` that does not compile matches nothing; it does not throw and does not
+stop the rules after it.
+
+A missing or unrecognised `when` is migrated rather than rejected: `matchRegex`
+becomes a `regex` rule, `match` becomes `contains` terms, and anything else
+becomes `contains`. Configs written before the rule form existed keep working
+and are rewritten into the shape above on the next save.
+
+#### The destination — exactly one
+
+A rule may carry only one. When it carries several, the first row of this table
+wins and the rest are dropped without complaint.
+
+| Key | Value | Modifiers it accepts |
+|---|---|---|
+| `action` | `"native"` — hand the link to the desktop application that owns the site | none |
+| `command` | a command line with `{url}` where the link goes | none |
+| `webapp` | desktop entry id of an Omarchy web app | none |
+| `browser` | desktop entry id | `profile`, `private` |
+
+- **`browser`** takes the id with or without the `.desktop` suffix
+  (`brave-browser` and `brave-browser.desktop` both resolve).
+- **`profile`** is the name the browser's own profile switcher shows — `"Work"`
+  rather than the on-disk `"Profile 3"`, though the directory name resolves too.
+  mclovin resolves that to `--profile-directory` for the Chromium family and
+  `--profile`/`-P` for Firefox.
+- **`private`** is `true` (the string `"true"` is also accepted). Every link the
+  rule catches opens in a private window.
+- **`action: "native"`** rewrites the link into the URI its application claims —
+  today only numbered `zoom.us` meeting links, which become `zoommtg://`. A link
+  the table does not know makes the rule fail and the picker open saying so.
+  `"zoom"` is what this action was called when Zoom was the only entry; it is
+  read and rewritten to `"native"`.
+- **`command`** is split like a desktop `Exec=` line, so quotes group. `{url}` is
+  replaced everywhere it appears. If the binary is not installed the link goes to
+  `fallback` instead of vanishing.
+- **`webapp`** is the desktop entry id of an Omarchy web app (`WhatsApp`), with
+  or without `.desktop` — not the window title.
+
+`profile` and `private` next to `webapp`, `command` or `action` are dropped. A
+`--app=` window has one site and one session, so there is no profile to pin and
+no incognito to ask for; and appending `--incognito` to somebody's own command
+line would be a guess about what that command line means.
+
+### Which rule wins
+
+The list is sorted narrowest-first on every load and every save, and the first
+match in that order is the one that fires. There is no order to maintain — write
+the rules in any order and the plugin rewrites the file in the order it uses.
+
+"Narrowest" is how much of the link a rule pins down:
+
+| `when` | Scores |
+|---|---|
+| `host` | length of the host with `www.` stripped, **+1** for being exact rather than a substring |
+| `startsWith` | length of the term, **+1** for being anchored |
+| `contains` | length of the term |
+| `regex` | its literal characters only — a metacharacter scores zero, and so does the character after a backslash |
+
+So `contains github.com/acme` (15) beats `host github.com` (11), which is the
+case that actually comes up: ranking by matcher kind instead would send every
+`github.com/acme` link to the rule about the whole of GitHub.
+
+A rule scores as its **loosest** term, because any one term matching is enough:
+`contains ["whatsapp.com", "wa.me"]` scores 5, not 12. Exact ties keep the order
+the rules were written in.
+
+### Worked examples
+
+**One site, one browser and profile.**
 
 ```json
 {
-  "version": 1,
-  "fallback": "",
-  "webapp": "",
+  "fallback": "firefox.desktop",
+  "fallbackProfile": "Personal",
   "rules": [
-    { "when": "startsWith", "terms": ["github.com/acme"], "browser": "chromium", "profile": "Work" },
-    { "when": "host", "terms": ["example.com", "example.org"], "browser": "firefox" },
-    { "when": "regex", "terms": ["^https://([a-z0-9-]+\\.)*zoom\\.us/(j|w|wc/join)/[0-9-]+(?:[/?#]|$)"], "action": "zoom" },
-    { "when": "host", "terms": ["hedge.example"], "browser": "firefox", "profile": "Personal", "private": true },
-    { "when": "regex", "terms": ["^https?://(\\w+)\\.internal\\."], "browser": "chromium" }
+    { "when": "host", "terms": ["github.com"], "browser": "brave-browser", "profile": "44" }
   ]
 }
 ```
 
-Matchers, narrowest rule wins:
+`https://github.com/acme/app/issues/1842` and `https://www.github.com/` both
+land in Brave's "44" profile. `https://gist.github.com/acme` does not — it is a
+different host — and goes to Firefox · Personal along with everything else.
 
-- `when` — `startsWith`, `contains`, `host`, or `regex`.
-- `terms` — one or more; any of them matching is enough.
+**A narrower rule inside a wider one, and a rule that is always private.**
 
-The older shape (`match` as a string or array, `matchRegex` for patterns) is
-still read and is migrated to the above the next time anything is saved.
+```json
+{
+  "rules": [
+    { "when": "host", "terms": ["github.com"], "browser": "brave-browser", "profile": "44" },
+    { "when": "contains", "terms": ["github.com/acme"], "browser": "chromium", "profile": "Work" },
+    { "when": "host", "terms": ["hedge.example"], "browser": "firefox", "profile": "Personal", "private": true }
+  ]
+}
+```
 
-Targets, one per rule:
+Written in that order, stored in the order 15, 14, 11 — the `contains` rule
+first. `https://github.com/acme/app` opens in Chromium · Work,
+`https://github.com/other/app` in Brave · 44, and `https://hedge.example/x` in a
+private Firefox · Personal window.
 
-- `action` — a built-in destination. `zoom` converts numbered Zoom meeting
-  links to `zoommtg://` and falls back to the original HTTPS link when needed.
-- `browser` — a desktop entry id, with or without the `.desktop` suffix.
-- `profile` — optional, alongside `browser`. Name it the way the browser's
-  profile switcher does ("Work", not "Profile 3"); mclovin resolves the mapping
-  itself. Chromium-family gets `--profile-directory`, Firefox gets `--profile`
-  with the profile's path, or `-P` for the older named profiles.
-- `private` — optional, alongside `browser`. Opens every link the rule catches
-  in a private window. Not available next to `command`.
-- `command` — a raw command line with `{url}` where the link goes, for anything
-  that is not a plain browser.
+**A web app, and a command.**
 
-And two settings:
+```json
+{
+  "rules": [
+    { "when": "contains", "terms": ["whatsapp.com", "wa.me"], "webapp": "WhatsApp" },
+    { "when": "startsWith", "terms": ["youtube.com/watch", "www.youtube.com/watch"], "command": "mpv {url}" }
+  ]
+}
+```
 
-- `fallback` — a browser to use when nothing matches, instead of showing the
-  picker. Leave it empty to always ask.
-- `webapp` — which browser gets `--app=` windows from `omarchy-launch-webapp`.
-  Falls back to `fallback`, then to the first browser found. Webapps never open
-  the picker. No screen writes this one yet: it is the one setting you have to
-  put in the file yourself.
+`https://api.whatsapp.com/send?phone=1` and `https://wa.me/1` go to the WhatsApp
+web app window — the share link and the app sit on different hosts, which is why
+this is `contains` rather than `host`. The second rule needs both spellings: with
+only `youtube.com/watch`, `http://youtube.com/watch?v=abc` matches and
+`https://www.youtube.com/watch?v=abc` does not.
+
+Adding `"profile"` or `"private"` to either of these rules writes a key that is
+read once and dropped.
+
+**Its native app, and the shapes the loader rewrites.**
+
+```json
+{
+  "handlers": { "zoommtg": "/usr/share/applications/Zoom.desktop" },
+  "rules": [
+    { "when": "regex", "terms": ["^https://([a-z0-9-]+\\.)*zoom\\.us/(j|w|wc/join)/[0-9-]+(?:[/?#]|$)"], "action": "zoom", "browser": "firefox" },
+    { "match": "figma.com", "browser": "chromium" },
+    { "matchRegex": "^https?://(\\w+)\\.internal\\.", "browser": "chromium" },
+    { "when": "host", "terms": ["nowhere.example"] }
+  ]
+}
+```
+
+Loads as three rules. The Zoom one keeps `action`, rewritten to `"native"`, and
+loses the `browser` it also carried; `https://us02web.zoom.us/j/123456789?pwd=example`
+becomes a `zoommtg://` URI while `https://zoom.us/myroom` stays an ordinary page
+and reaches the picker. `match` becomes `contains figma.com` and `matchRegex`
+becomes a `regex` rule, both still routing to Chromium. The fourth rule names no
+destination and is dropped.
+
+**Everything on a site, subdomains included.**
+
+```json
+{
+  "fallback": "firefox.desktop",
+  "rules": [
+    { "when": "contains", "terms": ["github.com"], "browser": "brave-browser", "profile": "44" },
+    { "when": "host", "terms": ["example.com", "example.org"], "browser": "chromium" }
+  ]
+}
+```
+
+Now `https://gist.github.com/acme` and `https://www.github.com/acme` both reach
+Brave · 44. `https://raw.githubusercontent.com/x` does not, because the string
+`github.com` is not in `githubusercontent.com`. The second rule catches
+`https://example.org/a` and `https://www.example.com/a` but not
+`https://docs.example.com/a`. It scores 12 — both its terms are eleven
+characters, plus one for being an exact host match — against 10 for
+`contains github.com`, so the plugin stores it first even though it is written
+second.
 
 ## Importing from the mclovin CLI
 
