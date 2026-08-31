@@ -1,75 +1,76 @@
 # Known Defects — Backlog
 
-Found during the 22/08/2026 audit of the web app path, after Omarchy web apps
-turned out to be opening in Chromium instead of the configured browser. The
-routing bug itself is fixed; everything below is what the audit turned up on the
-way and is still open.
+Found by an audit of the whole plugin on 31/08/2026: four independent auditors,
+then one skeptic per finding whose job was to refute it. Fourteen of thirty-four
+findings died there, which is the number that makes the rest worth reading.
 
-## Privacy (do these first)
+The confirmed ones that were fixed are in the history. These are the ones left,
+each with the reproduction that survived refutation.
 
-- [ ] `mclovin-open:46-50,122` — `--app=` breaks out of the argument loop and the
-      webapp exec never appends an incognito flag. `mclovin-open --incognito --app=URL`
-      opens a normal, history-recording window. `Browsers.js:283-305` composes it
-      correctly on the IPC path; the shim never learned to.
-- [ ] `mclovin-open:218-229` — with the shell down, the fallback goes through
-      `launch_desktop`, which adds no private flag either. `Service.qml:269`
-      deliberately refuses to send a private request to the fallback (`&& !wantPrivate`,
-      it asks instead); the shim's offline path breaks that same guarantee silently.
+## Reported as success, still
 
-## Web app path
+- [ ] `Service.qml` command branch — `Quickshell.execDetached` reports nothing
+      back, so a `command` rule whose binary is not installed is counted, written
+      to stats as a successful route, and answered "routed" to the shim, which
+      then exits 0 without reaching its own fallback. The shim's half of this
+      class was fixed; this half needs the command to be probed before the launch
+      is claimed, and doing that from QML means running it through `sh -c`, which
+      changes how every command rule launches. Worth doing deliberately.
 
-- [ ] `mclovin-open:119-122` — no Chromium-family guard on the resolved target. If
-      `.webapp` or `.fallback` names a Gecko browser the shim runs `firefox --app=URL`,
-      which does not exist. The retired CLI guarded this (`webapp.rs:62-79`); the shim
-      ported the resolution order but not the check.
-- [ ] `mclovin-open:120-121` — `exit 1` with no `notify-send` when `.webapp` names an
-      uninstalled browser, or when `jq` is missing so `setting()` always fails. A web
-      app click that does nothing and says nothing. The safety-net notification at
-      `:231-233` only covers the non-webapp path.
-- [ ] `mclovin-open:87` — `desktop_program` keeps only the first `Exec=` token, so any
-      entry wrapped in `env` or `flatpak run app/...` becomes `exec setsid flatpak --app=URL`.
-      The flatpak export dir is explicitly searched at `:84`, so this is reachable.
-- [ ] `Router.js:385` — config carries `webapp` but no `webappProfile`, and
-      `mclovin-open:122` passes no `--profile-directory`. `Browsers.js:266-275,297-316`
-      prove the flags compose, and `Browsers.js:329` documents that an `--app=` window's
-      class embeds the profile. Harmless on a single-profile browser; wrong the moment a
-      second profile exists.
+## The `--app=` path
 
-## Consistency between the shim and the service
+- [ ] `mclovin-open` `desktop_program` keeps only the first `Exec=` token, so a
+      Flatpak-exported browser is run as `flatpak --app=URL`. The whole Exec must
+      be expanded and `--app=` inserted after the wrapper's own arguments, not
+      after argv[0] — `--app` is not a flatpak global flag. Two proposed fixes
+      were refuted: a helper cannot return an argv, because `set --` inside a
+      function sets that function's own positional parameters.
+- [ ] `mclovin-open` `first_browser` searches two of the four directories the
+      launchers search, so a Flatpak-only or `/usr/local` browser is reported as
+      "no browser found".
+- [ ] The fallback path ignores `fallbackProfile`, which `Service.qml` honours.
+      The same link lands in a different profile depending on whether the shell
+      is up.
 
-- [ ] `mclovin-open:135-200` vs `Service.qml:269-275` — the shim's `launch_desktop`
-      ignores `fallbackProfile` entirely. Same click, same config, different profile
-      depending on whether the shell happens to be up.
-- [ ] `mclovin-open:195` — `launch_desktop` backgrounds `setsid "$@" &` and returns 0
-      unconditionally. If the target binary is gone the exec fails invisibly, the script
-      exits 0, and the notification at `:231-233` never fires — the link is dropped in
-      silence, which is exactly what the header comment at `:10-12` promises never happens.
+## Importing from the retired CLI
+
+- [ ] `[webapp].browser` is still dropped: the table falls into the catch-all
+      branch, so a migrant lands on the `webapp` key with it empty.
+- [ ] A handler target written as an inline table — `browser = { command =
+      "spotify", args = [...] }` — is imported as a browser *name*, producing a
+      rule that matches links and can never launch. It should either become a
+      `command` target, which the plugin already has, or be counted in `skipped`.
 
 ## Configuration surface
 
-- [ ] `Panel.qml`, `PickerView.qml`, `RuleFormView.qml` — nothing writes or displays the
-      `webapp` key. It can only be set by hand-editing config.json, so a user who does not
-      know it exists falls through to `first_browser()` on every web app click.
-- [ ] `Import.js:100` — the CLI importer treats `[webapp]` as a table that ends the current
-      handler, dropping `[webapp].browser` and its profile. The CLI supported a web app
-      profile (`webapp.rs:24-57`); importing from it loses that.
+- [ ] Nothing writes or displays the `webapp` key (which browser opens `--app=`
+      windows), or `webappProfile`, which does not exist. Both are reachable only
+      by hand-editing config.json.
+- [ ] When a rule's destination is no longer installed, `route()` computes the
+      reason and throws it away before opening the picker, so the picker says
+      nothing about why it appeared.
 
-## Retiring the Rust CLI
+## The companion
 
-- [ ] `mclovin/src/cmd/webapp_fix.rs` — now stale. It pins the literal upstream case line
-      and writes the prefix pattern `mclovin*`; against the plugin's `*mclovin*` it will
-      bail with "doesn't have the expected case line". Loud rather than harmful, but it
-      should be removed or made to defer to the plugin.
-- [ ] `mclovin/src/cmd/doctor.rs:35-45` — reports the whitelist healthy whenever the patch
-      string is present, without checking it matches the registered handler. This is the
-      check that reported green for months while every web app opened in Chromium. Either
-      port `mclovin-webapp-fix --check` or drop the check.
-- [ ] `~/.local/share/applications/mclovin.desktop` — the retired CLI's handler entry. The
-      plugin now filters every mclovin out of `first_browser()` and `isBrowserEntry`, so it
-      is no longer reachable as a routing target, but it still appears in app launchers as
-      a browser named "mclovin". Delete it when the CLI is formally retired.
-- [ ] Two rule sets are drifting: `~/.config/mclovin/rules.toml` (7 rules) and
-      `~/.config/omarchy-mclovin/config.json` (5). Decide which is canonical and migrate.
+- [ ] A browser rule narrower than a matching web-app rule is invisible to the
+      extension, so the click is cancelled and reopened in a new tab rather than
+      navigating.
+- [ ] A `--load-extension` line holding more than one flag is corrupted by
+      `manage`, and `status` then reports the extension as loading.
+- [ ] Every frame on a page asks the service worker for rules at once, and each
+      miss spawns its own native-host process.
+- [ ] `chrome.runtime.onMessageExternal` can never fire — no extension is
+      allowed to send to this one — so the rules cache is never invalidated from
+      outside, and the comment claims the panel drives it.
+- [ ] The panel offers the companion on the strength of a rule alone, with no
+      check that a Chromium-family browser exists for `manage` to install into.
+
+## Tooling
+
+- [ ] `qmllint` exits 255 with no diagnostic on `Panel.qml` when run from the
+      repository root. The same file copied elsewhere passes, so it is the tool
+      resolving sibling QML rather than the file. CI runs `qmlformat` instead,
+      which parses without resolving imports.
 
 ## Upstream
 
