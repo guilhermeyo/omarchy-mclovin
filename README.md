@@ -575,6 +575,36 @@ exactly as before — web apps are never offered as rows.
 - Browsers are read from the shell's desktop entry index, so one installed
   mid-session shows up without a restart.
 
+## When two applications claim the same thing
+
+An Omarchy with the Zoom web app installed has two files named `Zoom.desktop` —
+Omarchy's handler in `~/.local/share/applications` and the native client's in
+`/usr/share/applications` — and both claim `zoommtg://`. XDG resolves the user
+directory first, so every meeting link took a round trip back to a browser while
+the native client sat there, and `xdg-mime query default` answered
+`Zoom.desktop` for either, which is not an answer.
+
+mclovin asks instead. The first time a rule hands a link to a scheme more than
+one application claims, the picker opens listing them — by directory, because
+the directory is the only thing that tells two entries with one name and one id
+apart. Tick **Always** and the choice is written to `handlers` in
+`config.json`:
+
+```json
+"handlers": { "zoommtg": "/usr/share/applications/Zoom.desktop" }
+```
+
+By absolute path, for that same reason. A stored choice whose file has gone is
+treated as no choice, and the question is asked again rather than sent to
+something that is not there.
+
+```bash
+omarchy-shell io.github.guilhermeyo.mclovin status | jq '{zoomHandlers, chosenZoomHandler}'
+```
+
+is where to look when a link lands somewhere unexpected: how many applications
+claim the scheme, and which one was picked.
+
 ## Credits
 
 The browser companion is [@jondkinney](https://github.com/jondkinney)'s idea, and
