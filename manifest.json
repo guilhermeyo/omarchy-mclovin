@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.guilhermeyo.mclovin",
   "name": "mclovin",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": "Guilherme Yamakawa de Oliveira",
   "license": "MIT",
-  "description": "Choose which browser opens every link. A picker in the middle of the screen, one row per profile, and rules that send a link to a browser, a web app, or another application. An optional Chromium extension catches the ones clicked inside a browser.",
+  "description": "Choose which browser opens every link. A picker in the middle of the screen, one row per profile, and rules that send a link to a browser, a web app, or another application. An optional Chromium extension catches the clicks a rule sends out of the browser.",
   "kinds": ["service", "bar-widget", "overlay"],
   "keepLoaded": true,
   "entryPoints": {
