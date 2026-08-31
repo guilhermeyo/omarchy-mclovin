@@ -35,12 +35,22 @@ cat >"$bin/fake-browser" <<'SH'
 printf 'browser:%s\n' "$1" >>"$MCLOVIN_TEST_LOG"
 SH
 
-chmod +x "$bin/xdg-open" "$bin/fake-browser"
+# Stubbed alongside xdg-open, not left to the real one: whether this machine has
+# Zoom installed is exactly what the launcher asks, so a real xdg-mime would make
+# these results depend on the machine running them.
+cat >"$bin/xdg-mime" <<'SH'
+#!/bin/sh
+[ -n "${MCLOVIN_TEST_ZOOM_HANDLER-}" ] || exit 0
+printf '%s\n' "$MCLOVIN_TEST_ZOOM_HANDLER"
+SH
+
+chmod +x "$bin/xdg-open" "$bin/fake-browser" "$bin/xdg-mime"
 
 export HOME="$home"
 export XDG_CONFIG_HOME="$home/.config"
 export XDG_DATA_HOME="$data"
 export MCLOVIN_TEST_LOG="$log"
+export MCLOVIN_TEST_ZOOM_HANDLER="Zoom.desktop"
 export PATH="$bin:/usr/bin"
 
 fail() {
@@ -86,5 +96,15 @@ MCLOVIN_XDG_EXIT=1 "$repo/mclovin-open" --zoom-direct \
   'https://zoom.us/j/123456789?pwd=secret'
 assert_log 'xdg-open:zoommtg://zoom.us/join?action=join&confno=123456789&pwd=secret'
 assert_log 'browser:https://zoom.us/j/123456789?pwd=secret'
+
+# No zoommtg handler at all. xdg-open exits 0 with nothing registered — it
+# searches every mimeapps location, opens nothing, and reports success — so the
+# launcher has to ask xdg-mime rather than read that status. Before it did, this
+# link was dropped in silence.
+: >"$log"
+MCLOVIN_TEST_ZOOM_HANDLER='' MCLOVIN_XDG_EXIT=0 "$repo/mclovin-open" --zoom-direct \
+  'https://zoom.us/j/123456789'
+assert_log 'browser:https://zoom.us/j/123456789'
+grep -q '^xdg-open:' "$log" && fail "asked xdg-open with no zoommtg handler registered"
 
 printf 'zoom direct launcher tests passed\n'

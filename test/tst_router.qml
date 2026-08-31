@@ -85,6 +85,52 @@ TestCase {
     compare(config.rules[0].terms[0], "zoom.us")
   }
 
+  // The seventh parameter became an object when the web app destination landed
+  // in the same slot this one uses. Both kinds have to survive it, and a rule
+  // still has to be dropped when the object names nothing.
+  function test_make_rule_takes_a_target_object() {
+    var zoom = Router.makeRule(Router.WHEN_HOST, ["zoom.us"], "", "", "", false,
+                               { action: Router.ACTION_ZOOM })
+    compare(zoom.action, Router.ACTION_ZOOM)
+    verify(zoom.webapp === undefined)
+    verify(zoom.browser === undefined)
+
+    var webapp = Router.makeRule(Router.WHEN_CONTAINS, ["whatsapp.com"], "", "", "", false,
+                                 { webapp: "WhatsApp" })
+    compare(webapp.webapp, "WhatsApp")
+    verify(webapp.action === undefined)
+    verify(webapp.browser === undefined)
+
+    var browser = Router.makeRule(Router.WHEN_HOST, ["example.com"], "brave", "Work", "", true)
+    compare(browser.browser, "brave")
+    compare(browser.profile, "Work")
+    compare(browser.private, true)
+
+    verify(Router.makeRule(Router.WHEN_HOST, ["example.com"], "", "", "", false, {}) === null)
+    verify(Router.makeRule(Router.WHEN_HOST, ["example.com"], "", "", "", false) === null)
+  }
+
+  function test_both_destinations_round_trip_together() {
+    var config = Router.normalizeConfig({
+      rules: [
+        { when: "contains", terms: ["whatsapp.com"], webapp: "WhatsApp" },
+        { when: "host", terms: ["zoom.us"], action: "zoom" }
+      ]
+    })
+
+    compare(config.rules.length, 2)
+    var reloaded = Router.normalizeConfig(JSON.stringify(config))
+    compare(reloaded.rules.length, 2)
+
+    var sawWebapp = false, sawAction = false
+    for (var i = 0; i < reloaded.rules.length; i++) {
+      if (reloaded.rules[i].webapp === "WhatsApp") sawWebapp = true
+      if (reloaded.rules[i].action === Router.ACTION_ZOOM) sawAction = true
+    }
+    verify(sawWebapp)
+    verify(sawAction)
+  }
+
   function test_unknown_action_without_another_target_is_dropped() {
     var config = Router.normalizeConfig({
       rules: [{ when: "host", terms: ["example.com"], action: "unknown" }]

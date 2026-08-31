@@ -218,6 +218,11 @@ launch_desktop() {
 # mclovin is the default, xdg-open on the original URL would route straight
 # back here and loop; resolving the configured desktop entry avoids that.
 fallback_url() {
+  # POSIX sh has no `local`, so this writes the global — deliberately.
+  # launch_desktop substitutes $url into the Exec line it runs, and reads it
+  # from here. Passing a URL that is not the one already in $url is therefore
+  # not a spelling difference; it is the only way to make launch_desktop open
+  # something other than what was asked for.
   url=$1
 
   if fallback=$(setting '.fallback') && launch_desktop "$fallback"; then
@@ -296,8 +301,26 @@ zoom_join_uri() {
   printf '%s\n' "$uri"
 }
 
+# Whether anything on this machine claims zoommtg:// links.
+#
+# Asked outright, because xdg-open's exit status cannot answer it: with nothing
+# registered for a scheme it searches every mimeapps location, opens nothing and
+# still exits 0. Measured with XDG_UTILS_DEBUG_LEVEL=2. Trusting that status
+# meant `&& exit 0` fired on a machine without Zoom and the meeting link was
+# dropped in silence — no browser, no notification — which is the one thing the
+# header of this file promises never happens.
+#
+# xdg-mime and xdg-open ship together in xdg-utils, so requiring both costs
+# nothing that was going to work anyway.
+zoom_handler_exists() {
+  command -v xdg-mime >/dev/null 2>&1 || return 1
+  handler=$(xdg-mime query default x-scheme-handler/zoommtg 2>/dev/null) || return 1
+  [ -n "$handler" ]
+}
+
 if [ "$zoom_direct" -eq 1 ]; then
-  if uri=$(zoom_join_uri "$url") && command -v xdg-open >/dev/null 2>&1; then
+  if uri=$(zoom_join_uri "$url") && command -v xdg-open >/dev/null 2>&1 \
+     && zoom_handler_exists; then
     xdg-open "$uri" >/dev/null 2>&1 && exit 0
   fi
   fallback_url "$url"
