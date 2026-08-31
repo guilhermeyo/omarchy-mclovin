@@ -42,6 +42,65 @@ class NativeHostTest(unittest.TestCase):
         outgoing.seek(0)
         self.assertEqual(host.read_message(outgoing), {"ok": True})
 
+    def test_routes_only_ordinary_web_links(self):
+        self.assertTrue(host.routable_url("https://wa.me/5511999999999?text=hi"))
+        self.assertTrue(host.routable_url("http://example.test/page"))
+        self.assertFalse(host.routable_url("mailto:someone@example.test"))
+        self.assertFalse(host.routable_url("javascript:alert(1)"))
+        self.assertFalse(host.routable_url("file:///etc/passwd"))
+        self.assertFalse(host.routable_url("zoommtg://zoom.us/join?confno=1"))
+        self.assertFalse(host.routable_url("https:///no-host"))
+        self.assertFalse(host.routable_url("https://example.test/" + "a" * 9000))
+        self.assertFalse(host.routable_url(None))
+
+    def test_serves_only_rules_that_leave_the_browser(self):
+        config = {
+            "rules": [
+                {"when": "contains", "terms": ["whatsapp.com", "wa.me"], "webapp": "WhatsApp"},
+                {"when": "regex", "terms": ["^https://zoom\\.us/j/[0-9]+"], "action": "zoom"},
+                {"when": "contains", "terms": ["spotify.com"], "command": "spotify {url}"},
+                {"when": "contains", "terms": ["github.com"], "browser": "brave-browser"},
+                {"when": "host", "terms": ["no-target.test"]},
+                {"when": "", "terms": ["no-matcher.test"], "webapp": "X"},
+                {"when": "host", "terms": [], "webapp": "X"},
+                "not a rule",
+            ]
+        }
+        with tempfile.TemporaryDirectory() as config_home:
+            destination = Path(config_home) / "omarchy-mclovin"
+            destination.mkdir(parents=True)
+            (destination / "config.json").write_text(json.dumps(config), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": config_home}):
+                served = host.interceptable_rules()
+
+        # The three destinations that leave the browser, and only their matchers.
+        self.assertEqual(len(served), 3)
+        self.assertEqual(served[0], {"when": "contains", "terms": ["whatsapp.com", "wa.me"]})
+        for rule in served:
+            self.assertEqual(set(rule), {"when", "terms"})
+        # A browser destination is never watched: clicking a link that is already
+        # going to the browser you are reading in should navigate the tab.
+        self.assertNotIn("github.com", [t for rule in served for t in rule["terms"]])
+
+    def test_missing_or_broken_config_watches_nothing(self):
+        with tempfile.TemporaryDirectory() as config_home:
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": config_home}):
+                self.assertEqual(host.interceptable_rules(), [])
+                destination = Path(config_home) / "omarchy-mclovin"
+                destination.mkdir(parents=True)
+                (destination / "config.json").write_text("{ not json", encoding="utf-8")
+                self.assertEqual(host.interceptable_rules(), [])
+
+    def test_refuses_what_it_does_not_understand(self):
+        with self.assertRaises(ValueError):
+            host.handle_request({"type": "somethingElse"})
+        with self.assertRaises(ValueError):
+            host.handle_request({"type": "openUrl", "url": "javascript:alert(1)"})
+        with self.assertRaises(ValueError):
+            host.handle_request({"type": "openZoomDirectly", "url": "https://zoom.us/my/room"})
+        with self.assertRaises(ValueError):
+            host.handle_request("not an object")
+
     def test_status_handshake_records_only_local_connection_metadata(self):
         with tempfile.TemporaryDirectory() as state_home:
             with mock.patch.dict(os.environ, {"XDG_STATE_HOME": state_home}):

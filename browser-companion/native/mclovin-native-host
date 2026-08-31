@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Chromium native-messaging bridge for the mclovin Zoom target."""
+"""Chromium native-messaging bridge for mclovin.
+
+A link clicked inside a browser never reaches an XDG handler -- the browser owns
+that navigation. This is the way over that ceiling: the extension catches the
+click in the page and hands the URL here, and here hands it to mclovin, which
+applies the same rules it applies to every other link on the system.
+"""
 
 from datetime import datetime, timezone
 import json
@@ -17,10 +23,71 @@ ALLOWED_ORIGIN = f"chrome-extension://{EXTENSION_ID}/"
 MAX_MESSAGE_BYTES = 64 * 1024
 MEETING_PATH = re.compile(r"^/(?:j|w)/[0-9][0-9-]*/?$|^/wc/join/[0-9][0-9-]*/?$")
 
+# Rules the companion is allowed to act on: the ones whose destination leaves
+# the browser. A rule naming a browser is deliberately excluded -- clicking a
+# link that is already going to the browser you are reading in should navigate
+# the tab, not open a second one, and only the browser can do that.
+INTERCEPTABLE = ("webapp", "action", "command")
+MAX_RULES = 200
+
 
 def state_path():
     state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
     return state_home / "omarchy-mclovin" / "browser-companion.json"
+
+
+def config_path():
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return config_home / "omarchy-mclovin" / "config.json"
+
+
+def interceptable_rules():
+    """The matchers the extension should watch for, and nothing else.
+
+    Only `when` and `terms` travel. The destination stays here: the extension
+    has no business knowing which browser or web app a link ends up in, and
+    sending it would put routing decisions in two places.
+    """
+    try:
+        config = json.loads(config_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(config, dict):
+        return []
+
+    out = []
+    for rule in (config.get("rules") or [])[:MAX_RULES]:
+        if not isinstance(rule, dict):
+            continue
+        if not any(str(rule.get(kind) or "").strip() for kind in INTERCEPTABLE):
+            continue
+        when = str(rule.get("when") or "")
+        terms = [str(t) for t in (rule.get("terms") or []) if isinstance(t, str) and t]
+        if not when or not terms:
+            continue
+        out.append({"when": when, "terms": terms})
+    return out
+
+
+def routable_url(value):
+    """An ordinary web link, or "".
+
+    Deliberately not a rule check -- mclovin decides where a link goes, and
+    asking twice is how the two answers start disagreeing. This only refuses
+    what should never reach a router at all: a scheme that is not http(s), and
+    anything long enough to be an attack rather than a link.
+    """
+    if not isinstance(value, str) or len(value) > 8192:
+        return ""
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if not parsed.hostname:
+        return ""
+    return value
 
 
 def zoom_meeting_url(value):
@@ -81,13 +148,13 @@ def record_connected(request):
     return state
 
 
-def open_zoom(url):
+def run_helper(arguments):
     helper = Path(__file__).resolve().parents[2] / "mclovin-open"
     if not helper.is_file() or not os.access(helper, os.X_OK):
         return False, "mclovin-open is missing or not executable"
     try:
         result = subprocess.run(
-            [str(helper), "--zoom-direct", url],
+            [str(helper)] + arguments,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -99,25 +166,48 @@ def open_zoom(url):
     return (True, "") if result.returncode == 0 else (False, "mclovin-open failed")
 
 
+def open_zoom(url):
+    return run_helper(["--zoom-direct", url])
+
+
+def open_url(url):
+    # No --zoom-direct here: this is an ordinary link, and mclovin-open routes it
+    # through the same rules every other link on the system goes through. A rule
+    # that resolves to the Zoom action reaches --zoom-direct from the other side,
+    # where the URL is validated again before it becomes a zoommtg:// URI.
+    return run_helper([url])
+
+
 def handle_request(request):
     if not isinstance(request, dict):
         raise ValueError("message must be an object")
     message_type = request.get("type", "openZoomDirectly")
     if message_type == "status":
         state = record_connected(request)
-        return {"ok": True, "extensionId": EXTENSION_ID, "lastSeen": state["lastSeen"]}
-    if message_type != "openZoomDirectly":
+        return {"ok": True, "extensionId": EXTENSION_ID, "lastSeen": state["lastSeen"],
+                "rules": interceptable_rules()}
+    if message_type == "rules":
+        return {"ok": True, "rules": interceptable_rules()}
+
+    if message_type == "openZoomDirectly":
+        url = zoom_meeting_url(request.get("url"))
+        if not url:
+            raise ValueError("not a Zoom meeting URL")
+        opener = open_zoom
+    elif message_type == "openUrl":
+        url = routable_url(request.get("url"))
+        if not url:
+            raise ValueError("not a routable link")
+        opener = open_url
+    else:
         raise ValueError("unknown message type")
 
-    url = zoom_meeting_url(request.get("url"))
-    if not url:
-        raise ValueError("not a Zoom meeting URL")
     try:
         record_connected(request)
     except OSError:
-        # Status is useful but never allowed to block a meeting launch.
+        # Status is useful but never allowed to block a launch.
         pass
-    ok, error = open_zoom(url)
+    ok, error = opener(url)
     response = {"ok": ok}
     if error:
         response["error"] = error

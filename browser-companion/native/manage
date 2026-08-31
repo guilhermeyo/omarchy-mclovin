@@ -9,7 +9,12 @@ import shutil
 import subprocess
 
 
-HOST = "io.github.guilhermeyo.mclovin.zoom"
+HOST = "io.github.guilhermeyo.mclovin"
+
+# The host was named for Zoom when Zoom was the only thing it opened. An install
+# clears the old registration so a browser is never left holding two manifests,
+# one of them pointing at a message type this host no longer answers.
+LEGACY_HOSTS = ("io.github.guilhermeyo.mclovin.zoom",)
 EXTENSION_ID = "nplmoglnnfadaifhkpkmimcbgmfakfec"
 STORE_URL = ""
 BROWSERS = {
@@ -57,8 +62,15 @@ def extension_path():
     return (Path(__file__).resolve().parent.parent / "extension").resolve()
 
 
-def manifest_path(browser):
-    return config_home() / BROWSERS[browser]["config"] / "NativeMessagingHosts" / f"{HOST}.json"
+def manifest_path(browser, host=HOST):
+    return config_home() / BROWSERS[browser]["config"] / "NativeMessagingHosts" / f"{host}.json"
+
+
+def drop_legacy(browser):
+    for host in LEGACY_HOSTS:
+        stale = manifest_path(browser, host)
+        if stale.is_file():
+            stale.unlink()
 
 
 def existing_browsers(include_registered=False):
@@ -102,6 +114,7 @@ def install(names):
     manifest = host_manifest()
     for browser in selected:
         write_json(manifest_path(browser), manifest)
+        drop_legacy(browser)
     return selected
 
 
@@ -110,6 +123,7 @@ def uninstall(names):
     removed = []
     for browser in selected:
         destination = manifest_path(browser)
+        drop_legacy(browser)
         if destination.is_file():
             destination.unlink()
             removed.append(browser)
