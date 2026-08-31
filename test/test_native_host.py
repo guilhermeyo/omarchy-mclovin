@@ -61,8 +61,21 @@ class NativeHostTest(unittest.TestCase):
                 {"when": "contains", "terms": ["spotify.com"], "command": "spotify {url}"},
                 {"when": "contains", "terms": ["github.com"], "browser": "brave-browser"},
                 {"when": "host", "terms": ["no-target.test"]},
-                {"when": "", "terms": ["no-matcher.test"], "webapp": "X"},
+                # Router migrates an absent matcher to `contains`, so this rule
+                # routes and the host has to watch it.
+                {"when": "", "terms": ["migrates.test"], "webapp": "X"},
+                # The pre-form shapes. config.json on disk is whatever was last
+                # written there, and nothing rewrites it until a rule is edited
+                # through the form -- so a config older than the form still
+                # carries these, and Router still reads them.
+                {"match": ["legacy-plain.test"], "webapp": "X"},
+                {"matchRegex": "^https://legacy-regex", "action": "zoom"},
+                # No terms at all: Router drops it, so the host must too.
                 {"when": "host", "terms": [], "webapp": "X"},
+                # An action Router does not define. It drops the rule entirely,
+                # so watching for it would cancel clicks for a rule that is not
+                # there.
+                {"when": "host", "terms": ["unknown-action.test"], "action": "teleport"},
                 "not a rule",
             ]
         }
@@ -73,14 +86,28 @@ class NativeHostTest(unittest.TestCase):
             with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": config_home}):
                 served = host.interceptable_rules()
 
-        # The three destinations that leave the browser, and only their matchers.
-        self.assertEqual(len(served), 3)
+        # Every rule Router would route by, in the same shape Router gives it.
         self.assertEqual(served[0], {"when": "contains", "terms": ["whatsapp.com", "wa.me"]})
         for rule in served:
             self.assertEqual(set(rule), {"when", "terms"})
+
+        by_terms = {tuple(r["terms"]): r["when"] for r in served}
+        self.assertEqual(by_terms[("migrates.test",)], "contains")
+        self.assertEqual(by_terms[("legacy-plain.test",)], "contains")
+        self.assertEqual(by_terms[("^https://legacy-regex",)], "regex")
+        self.assertNotIn(("unknown-action.test",), by_terms)
+        self.assertEqual(len(served), 6)
+
         # A browser destination is never watched: clicking a link that is already
         # going to the browser you are reading in should navigate the tab.
         self.assertNotIn("github.com", [t for rule in served for t in rule["terms"]])
+
+    def test_a_scalar_terms_value_is_one_term(self):
+        # Router.termList treats a bare string as a single term. Iterating it
+        # here would serve one matcher per character, and a one-character
+        # `contains` matches nearly every URL on every page.
+        matcher = host.normalized_matcher({"when": "contains", "terms": "whatsapp.com"})
+        self.assertEqual(matcher, {"when": "contains", "terms": ["whatsapp.com"]})
 
     def test_missing_or_broken_config_watches_nothing(self):
         with tempfile.TemporaryDirectory() as config_home:

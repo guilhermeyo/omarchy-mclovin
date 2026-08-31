@@ -36,6 +36,50 @@ def state_path():
     return state_home / "omarchy-mclovin" / "browser-companion.json"
 
 
+# Router.WHEN_* -- the four matcher kinds, and the only action it defines.
+WHEN_KINDS = ("startsWith", "contains", "host", "regex")
+ACTION_ZOOM = "zoom"
+
+
+def term_list(value):
+    """Router.termList: a scalar counts as one term, and terms are trimmed.
+
+    Not iterating a bare string is the whole point. `terms: "whatsapp.com"` is
+    one term to Router; iterating it here would serve twelve one-character
+    `contains` matchers, and a one-character `contains` matches nearly every URL
+    on every page.
+    """
+    items = value if isinstance(value, (list, tuple)) else [value]
+    return [t.strip() for t in items if isinstance(t, str) and t.strip()]
+
+
+def normalized_matcher(rule):
+    """The {when, terms} Router would route by, or None.
+
+    config.json on disk is whatever was last written there, and Router migrates
+    the pre-form shape -- `matchRegex` for a regex, `match` for a plain term --
+    every time it loads. Nothing rewrites the file until a rule is edited
+    through the form, so a config that predates the form, or one edited by hand
+    from the README's own examples, still carries it.
+
+    Reading the file raw made those rules invisible to the companion while the
+    panel, reading the same file through Router, said it was watching them.
+    """
+    when = str(rule.get("when") or "").strip()
+    terms = term_list(rule.get("terms"))
+
+    if when not in WHEN_KINDS:
+        regex = str(rule.get("matchRegex") or "").strip()
+        if regex:
+            when, terms = "regex", [regex]
+        else:
+            when = "contains"
+            if not terms:
+                terms = term_list(rule.get("match"))
+
+    return {"when": when, "terms": terms} if terms else None
+
+
 def config_path():
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return config_home / "omarchy-mclovin" / "config.json"
@@ -59,13 +103,15 @@ def interceptable_rules():
     for rule in (config.get("rules") or [])[:MAX_RULES]:
         if not isinstance(rule, dict):
             continue
+        if str(rule.get("action") or "").strip() not in ("", ACTION_ZOOM):
+            # Router drops a rule whose action it does not know, so watching for
+            # one would cancel clicks that then reach a rule that does not exist.
+            continue
         if not any(str(rule.get(kind) or "").strip() for kind in INTERCEPTABLE):
             continue
-        when = str(rule.get("when") or "")
-        terms = [str(t) for t in (rule.get("terms") or []) if isinstance(t, str) and t]
-        if not when or not terms:
-            continue
-        out.append({"when": when, "terms": terms})
+        matcher = normalized_matcher(rule)
+        if matcher:
+            out.append(matcher)
     return out
 
 

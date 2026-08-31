@@ -41,6 +41,7 @@ Panel {
   readonly property var browserCompanion: service ? service.browserCompanion : ({})
   readonly property bool browserCompanionRegistered: service ? service.browserCompanionRegistered : false
   readonly property bool browserCompanionConnected: service ? service.browserCompanionConnected : false
+  readonly property bool browserCompanionInstallable: service ? service.browserCompanionInstallable : false
   readonly property string browserCompanionPath: browserCompanion.extensionPath || ""
   readonly property string browserCompanionStoreUrl: browserCompanion.storeUrl || ""
   readonly property string browserCompanionError: service ? service.browserCompanionError : ""
@@ -414,13 +415,13 @@ Panel {
       // has deliberately created a Zoom-direct rule.
       PanelSeparator {
         foreground: root.foreground
-        visible: root.hasCompanionRule
+        visible: root.hasCompanionRule && root.browserCompanionInstallable
       }
 
       Column {
         width: parent.width
         spacing: Style.space(6)
-        visible: root.hasCompanionRule
+        visible: root.hasCompanionRule && root.browserCompanionInstallable
 
         PanelSectionHeader {
           width: parent.width

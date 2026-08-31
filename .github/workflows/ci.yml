@@ -1,0 +1,214 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: syntax, manifest contract, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # qt6-declarative-dev-tools ships /usr/lib/qt6/bin/qmltestrunner and
+      # qmlformat. The Qt5 qmltestrunner that qtchooser puts on PATH as
+      # /usr/bin/qmltestrunner exits 1 with no output on these tests, so the
+      # Qt6 binary is always called by its absolute path below.
+      # jq is what mclovin-open reads config.json with, and test_zoom_open.sh
+      # pins PATH to "$stub_dir:/usr/bin", so it has to be at /usr/bin/jq.
+      - name: Install Qt6 QML test tooling and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qt6-declarative-dev-tools \
+            qml6-module-qtquick \
+            qml6-module-qttest \
+            qml6-module-qtqml-workerscript \
+            qml6-module-qtquick-window \
+            qml6-module-qtqml-models \
+            jq
+          test -x /usr/lib/qt6/bin/qmltestrunner
+          test -x /usr/lib/qt6/bin/qmlformat
+          test -x /usr/bin/jq
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ---------------------------------------------------------------- syntax
+
+      # /bin/sh on Ubuntu is dash, so `sh -n` checks these against a real POSIX
+      # shell rather than bash in sh mode.
+      - name: Shell syntax
+        run: |
+          set -eu
+          for f in mclovin-open mclovin-webapp-fix test/test_zoom_open.sh; do
+            sh -n "$f"
+            echo "sh -n ok: $f"
+          done
+          for f in demo/run hooks/mclovin-webapp-fix.hook; do
+            bash -n "$f"
+            echo "bash -n ok: $f"
+          done
+
+      - name: Python syntax
+        run: |
+          set -eu
+          python3 -m py_compile \
+            browser-companion/native/manage \
+            browser-companion/native/mclovin-native-host
+          echo "py_compile ok"
+
+      # Only the extension sources. Router.js, Import.js and Browsers.js are QML
+      # JS resources: they open with `.pragma library` and Import.js uses
+      # `.import`, neither of which parses as plain JavaScript. Those three are
+      # covered by the qmltestrunner run instead.
+      - name: Extension JavaScript syntax
+        run: |
+          set -eu
+          for f in browser-companion/extension/*.js; do
+            node --check "$f"
+            echo "node --check ok: $f"
+          done
+
+      # qmlformat parses the QML without resolving imports, so it catches syntax
+      # errors in files that import Quickshell and qs.* -- modules that do not
+      # exist on this runner. It is a parse gate, not a type check. The local
+      # `qmllint -I $OMARCHY_PATH/shell *.qml` has no CI equivalent: it needs
+      # the Quickshell and Omarchy shell QML modules, which are Arch/Omarchy
+      # only. Deliberately not faked with --ignore flags that would pass on
+      # anything.
+      - name: QML parses
+        run: |
+          set -eu
+          for f in *.qml test/*.qml; do
+            /usr/lib/qt6/bin/qmlformat "$f" > /dev/null
+            echo "parses: $f"
+          done
+
+      - name: JSON parses
+        run: |
+          set -eu
+          git ls-files '*.json' | while read -r f; do
+            jq -e . "$f" > /dev/null
+            echo "valid json: $f"
+          done
+
+      # ------------------------------------------------------ manifest contract
+
+      # `omarchy plugin validate .` cannot run here -- omarchy is not
+      # installable on Ubuntu. Every check that script makes is jq, a bash
+      # regex, or find, so all of them are reproduced below; the messages are
+      # kept identical to the ones omarchy prints. Verified against
+      # omarchy-plugin-validate on a real Omarchy box: same accept on this
+      # repo, same rejection message on schemaVersion "1", a reserved
+      # omarchy.* id, a missing entry-point file, a kind with no entry point,
+      # a bad barWidget.defaultSection, a '..' in an entry point, empty kinds,
+      # and a symlink in the tree.
+      - name: Plugin manifest contract
+        run: |
+          set -uo pipefail
+          M=manifest.json
+          fail() { echo "::error file=$M::plugin manifest: $*"; exit 1; }
+
+          [ -f "$M" ] || fail "missing manifest.json"
+          jq -e . "$M" >/dev/null 2>&1 || fail "manifest.json is not valid JSON"
+
+          jq -e '.schemaVersion == 1' "$M" >/dev/null 2>&1 \
+            || fail "unsupported or missing schemaVersion (expected the JSON number 1)"
+
+          for field in id name version kinds entryPoints; do
+            jq -e --arg f "$field" 'has($f)' "$M" >/dev/null 2>&1 \
+              || fail "manifest missing required field '$field'"
+          done
+
+          ID=$(jq -r '.id // ""' "$M")
+          [ -n "$ID" ] || fail "manifest 'id' is empty"
+          [[ $ID =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "invalid plugin id '$ID'"
+          [[ $ID != *".."* ]] || fail "invalid plugin id '$ID'"
+          [[ $ID != omarchy.* ]] || fail "plugin id '$ID' uses the reserved omarchy.* namespace"
+
+          jq -e '(.kinds | type) == "array" and (.kinds | length) > 0' "$M" >/dev/null 2>&1 \
+            || fail "'kinds' must be a non-empty array"
+          jq -e '(.entryPoints | type) == "object"' "$M" >/dev/null 2>&1 \
+            || fail "'entryPoints' must be an object"
+
+          jq -e '
+            if ((.barWidget? | type) == "object" and (.barWidget | has("defaultSection"))) then
+              .barWidget.defaultSection as $s
+              | ($s | type) == "string"
+                and (["left", "center", "right"] | index($s)) != null
+            else
+              true
+            end
+          ' "$M" >/dev/null 2>&1 \
+            || fail "'barWidget.defaultSection' must be left, center, or right"
+
+          while IFS= read -r ep_json; do
+            [ -n "$ep_json" ] || continue
+            ep=$(jq -r '.' <<<"$ep_json")
+            [ -n "$ep" ] || fail "entry point path is empty"
+            [[ $ep != *$'\n'* ]] || fail "entry point may not contain a newline"
+            [[ $ep != /* ]] || fail "entry point must be a relative path: '$ep'"
+            [[ $ep != *".."* ]] || fail "entry point may not contain '..': '$ep'"
+            [ -f "$ep" ] || fail "entry point file not found: '$ep'"
+          done < <(jq -c '.entryPoints | to_entries[] | .value' "$M")
+
+          for kind_entry_point in \
+            "bar:bar" \
+            "bar-widget:barWidget" \
+            "menu:menu" \
+            "overlay:overlay" \
+            "panel:panel" \
+            "service:service"; do
+            kind="${kind_entry_point%%:*}"
+            entry_point="${kind_entry_point##*:}"
+            jq -e --arg kind "$kind" '(.kinds | index($kind)) != null' "$M" >/dev/null 2>&1 || continue
+            jq -e --arg ep "$entry_point" '.entryPoints | has($ep)' "$M" >/dev/null 2>&1 \
+              || fail "kind '$kind' requires an 'entryPoints.$entry_point' to load"
+          done
+
+          link=$(find . -name .git -prune -o -type l -print -quit 2>/dev/null)
+          [ -z "$link" ] || fail "symlinks are not allowed inside a plugin folder: $link"
+
+          echo "manifest contract ok: $ID $(jq -r .version "$M")"
+        shell: bash
+
+      # ----------------------------------------------------------------- tests
+
+      - name: Router unit tests (QML)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: /usr/lib/qt6/bin/qmltestrunner -input test/tst_router.qml
+
+      - name: Browser companion tests (node)
+        run: node test/test_browser_companion.js
+
+      - name: Native host tests (python)
+        run: python3 test/test_native_host.py -v
+
+      - name: Companion manage tests (python)
+        run: python3 test/test_companion_manage.py -v
+
+      # Runs under dash, the /bin/sh this script declares. It stubs xdg-open,
+      # xdg-mime and a fake browser in a temp dir and pins PATH to that plus
+      # /usr/bin, so the only host binaries it can reach are coreutils and jq.
+      - name: Zoom direct launcher tests (POSIX sh)
+        run: sh test/test_zoom_open.sh

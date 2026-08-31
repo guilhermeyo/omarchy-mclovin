@@ -22,6 +22,7 @@ mclovin — choose which browser opens a link.
 Usage: mclovin-open [URL]
        mclovin-open --app=URL
        mclovin-open --incognito [URL]
+       mclovin-open --fallback URL
        mclovin-open --zoom-direct URL
 
 With no URL it opens the picker so you can just pick a browser. Registered as
@@ -38,6 +39,7 @@ USAGE
 url=""
 want_private=0
 zoom_direct=0
+force_fallback=0
 
 for argument in "$@"; do
   case $argument in
@@ -49,6 +51,12 @@ for argument in "$@"; do
       # Handled below, where the webapp browser is resolved.
       url=$argument
       break
+      ;;
+    --fallback)
+      # Service.qml uses this when a rule's own destination could not be run:
+      # skip the IPC round trip -- the shell is what asked -- and open the link
+      # in the fallback browser, which is the one thing this file guarantees.
+      force_fallback=1
       ;;
     --zoom-direct)
       # Built-in rule target: the following URL is converted to zoommtg://
@@ -107,9 +115,15 @@ desktop_program() {
 # its own picker, and the real browsers in /usr/share/applications were never
 # reached.
 first_browser() {
+  # The same four directories launch_desktop and desktop_program search. Two of
+  # them were missing here, so a browser installed only as a Flatpak, or only
+  # under /usr/local, was reported as "no browser found" by the one function
+  # whose answer decides whether the notification fires.
   for dir in \
     "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
-    /usr/share/applications
+    /usr/local/share/applications \
+    /usr/share/applications \
+    /var/lib/flatpak/exports/share/applications
   do
     [ -d "$dir" ] || continue
     for file in "$dir"/*.desktop; do
@@ -118,6 +132,20 @@ first_browser() {
         *mclovin*) continue ;;
       esac
       grep -qi '^Categories=.*WebBrowser' "$file" || continue
+
+      # An uninstalled browser leaves its .desktop behind, and this is the last
+      # candidate before the notification -- returning it hands the click to a
+      # program that is not there and calls that success.
+      #
+      # The quote strip is not cosmetic. A real entry on the machine this was
+      # written on reads `Exec="/home/…/bin/claude" …`, whose first whitespace
+      # token carries a literal quote and resolves to nothing without it.
+      program=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$file" | head -n1)
+      program=${program#\"}
+      program=${program%\"}
+      [ -n "$program" ] || continue
+      command -v "$program" >/dev/null 2>&1 || continue
+
       basename "$file"
       return 0
     done
@@ -125,18 +153,41 @@ first_browser() {
   return 1
 }
 
-# `omarchy-launch-webapp` invokes the default browser as `<browser> --app=URL`.
-# That is a chromeless window for one site, not a link to route, so it never
-# reaches the picker — it goes straight to the configured webapp browser.
-case $url in
-  --app=*)
-    app_url=${url#--app=}
-    target=$(setting '.webapp') || target=$(setting '.fallback') || target=$(first_browser) || target=""
-    [ -n "$target" ] || exit 1
-    program=$(desktop_program "$target") || exit 1
-    exec setsid "$program" --app="$app_url"
-    ;;
-esac
+# The flag that pins a profile, by family. Chromium takes a directory name and
+# Gecko takes either a name or an absolute path.
+#
+# The value is used as written. Service.qml resolves a profile's display name to
+# its on-disk directory by reading the browser's own Local State, which needs
+# the profile store this script has no business parsing -- and resolveProfileDirectory
+# falls back to treating the value as a directory anyway, which is what someone
+# editing config.json by hand is most likely to have typed.
+profile_args() {
+  case $(printf '%s %s' "$1" "${2:-}" | tr '[:upper:]' '[:lower:]') in
+    *firefox*|*librewolf*|*zen*|*floorp*|*waterfox*|*icecat*|*mullvad*)
+      case $3 in
+        /*) printf '%s\n%s' '--profile' "$3" ;;
+        *)  printf '%s\n%s' '-P' "$3" ;;
+      esac
+      ;;
+    *) printf '%s' "--profile-directory=$3" ;;
+  esac
+}
+
+# The flag each family's own [Desktop Action new-private-window] runs -- the
+# same table as Browsers.js privateFlag, and it is a table rather than a guess
+# for the same reason: every entry was read off an installed .desktop.
+#
+# A family with no entry gets nothing and the caller refuses, because opening an
+# ordinary window and calling it private is the failure this exists to prevent.
+# Matched on the desktop id AND the resolved program, since ids like
+# io.gitlab.librewolf-community do not all name the family they belong to.
+private_flag() {
+  case $(printf '%s %s' "$1" "${2:-}" | tr '[:upper:]' '[:lower:]') in
+    *firefox*|*librewolf*|*zen*|*floorp*|*waterfox*|*icecat*|*mullvad*) printf '%s' '--private-window' ;;
+    *brave*|*chrom*|*edge*|*vivaldi*|*opera*|*helium*|*thorium*) printf '%s' '--incognito' ;;
+    *) return 1 ;;
+  esac
+}
 
 # Locate a .desktop by id across the standard data dirs and run its Exec line
 # with the URL substituted. Used only on the fallback path.
@@ -179,6 +230,16 @@ launch_desktop() {
     set +f
     [ "$#" -gt 0 ] || continue
 
+    # `setsid ... &` below cannot report a failed exec: the shell forks, the
+    # child dies with 127 into a discarded stream, and this function has already
+    # returned 0. A stale entry from an uninstalled browser therefore swallowed
+    # the link in silence, and fallback_url never reached first_browser because
+    # it had been told the launch worked.
+    #
+    # `continue` rather than `return 1`: the same id is retried in the next data
+    # dir, so a shadowed local entry falls through to the packaged one.
+    command -v "$1" >/dev/null 2>&1 || continue
+
     # Rebuild the list, replacing the URL field codes with the link and dropping
     # every other code, as the desktop entry spec requires. Rotating the
     # positional parameters is the only array a POSIX shell has: each turn takes
@@ -206,6 +267,51 @@ launch_desktop() {
       set -- "$@" "$url"
     fi
     [ "$#" -gt 0 ] || continue
+
+    # Service.qml refuses to send a private request to the fallback browser and
+    # opens the picker instead, because a fallback launched with no private flag
+    # records exactly the history the request existed to avoid. With the shell
+    # down there is no picker to fall through to, so the flag is added here
+    # rather than dropped -- and where the family has none, the click is refused
+    # and said so, which is the only honest answer left.
+    #
+    # The flag goes right after the program, before the entry's own arguments:
+    # Chromium hands a URL to an already-running process and only honours flags
+    # that precede it.
+    # Service.qml pins fallbackProfile on its own fallback; ignoring it here put
+    # the same link in a different profile depending on whether the shell
+    # happened to be up.
+    if profile=$(setting '.fallbackProfile'); then
+      program=$1
+      shift
+      # Flags precede the entry's own arguments: Chromium hands a URL to an
+      # already-running process and only honours what comes before it.
+      # A literal newline, not $(printf '\n'): command substitution strips
+      # trailing newlines, so IFS would come out empty and `-P Personal` would
+      # reach the browser as one argument with a newline inside it.
+      old_ifs=$IFS
+      IFS='
+'
+      set -f
+      # shellcheck disable=SC2046
+      set -- "$program" $(profile_args "$id" "$program" "$profile") "$@"
+      set +f
+      IFS=$old_ifs
+    fi
+
+    if [ "$want_private" -eq 1 ]; then
+      if private=$(private_flag "$id" "$1"); then
+        program=$1
+        shift
+        set -- "$program" "$private" "$@"
+      else
+        if command -v notify-send >/dev/null 2>&1; then
+          notify-send -u critical "mclovin" \
+            "$id has no private-window flag, so this link was not opened. Opening it normally would have recorded the history you asked it not to." || true
+        fi
+        return 1
+      fi
+    fi
 
     setsid "$@" >/dev/null 2>&1 &
     return 0
@@ -301,6 +407,90 @@ zoom_join_uri() {
   printf '%s\n' "$uri"
 }
 
+# --app= is a Chromium flag. Gecko has no equivalent: handed one, Firefox starts
+# on its own home page and never loads the URL at all. Service.qml refuses the
+# same target on the IPC path with the same reasoning; this branch runs before
+# the omarchy-shell call and never reaches that code.
+#
+# Written as "is this Gecko" rather than "is this Chromium" on purpose. An
+# allow-list of chrome|brave|edge|vivaldi silently excludes opera, helium,
+# thorium and every other fork -- all of which do have --app, and two of which
+# are on upstream's own whitelist in omarchy-launch-webapp. Naming the family
+# that cannot is a short list that stays short.
+gecko_browser() {
+  case $(printf '%s' "$1" | tr '[:upper:]' '[:lower:]') in
+    *firefox*|*librewolf*|*zen*|*floorp*|*waterfox*|*icecat*|*seamonkey*|*mullvad*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# `omarchy-launch-webapp` invokes the default browser as `<browser> --app=URL`.
+# That is a chromeless window for one site, not a link to route, so it never
+# reaches the picker -- it goes straight to the configured webapp browser.
+case $url in
+  --app=*)
+    app_url=${url#--app=}
+
+    # Each candidate has to survive being resolved, not merely being set.
+    # `target=$(setting .webapp) || target=$(setting .fallback)` short-circuited
+    # on the first successful READ, so a .webapp naming a browser that had since
+    # been uninstalled read fine and the fallback was never consulted --
+    # Service.qml walks the same three candidates and skips the ones it cannot
+    # resolve, which is why the shell opened the web app and the shim did not.
+    app_candidate=""
+    for source in webapp fallback any; do
+      case $source in
+        webapp)   candidate=$(setting '.webapp')   || candidate="" ;;
+        fallback) candidate=$(setting '.fallback') || candidate="" ;;
+        any)      candidate=$(first_browser)       || candidate="" ;;
+      esac
+      [ -n "$candidate" ] || continue
+
+      if gecko_browser "$candidate"; then
+        # An explicitly configured Gecko browser is a mistake worth naming, not
+        # one to paper over by quietly using a different browser. Say the same
+        # thing Service.qml says, then keep looking.
+        if [ "$source" = webapp ] && command -v notify-send >/dev/null 2>&1; then
+          notify-send -u critical "mclovin" \
+            "$candidate has no --app window. Set \"webapp\" in $config to a Chromium-family browser." || true
+        fi
+        continue
+      fi
+
+      candidate_program=$(desktop_program "$candidate") || continue
+      [ -n "$candidate_program" ] || continue
+      command -v "$candidate_program" >/dev/null 2>&1 || continue
+      app_candidate=$candidate
+      break
+    done
+
+    # Launch through launch_desktop with `--app=URL` standing in for the link,
+    # rather than running the entry's first Exec token with the flag bolted on.
+    #
+    # desktop_program keeps only that first token, so a Flatpak-exported browser
+    # -- whose Exec is `/usr/bin/flatpak run --branch=… --command=brave
+    # com.brave.Browser @@u %U @@` -- was launched as `flatpak --app=URL`, which
+    # is not a flatpak flag and opens nothing. The flatpak export directory is
+    # deliberately searched, so this was reachable.
+    #
+    # `--app=URL` is the browser argument that replaces the URL, so putting it
+    # where %u/%U sits puts it exactly where the browser's own arguments begin,
+    # wrapper or no wrapper. launch_desktop already does that substitution, and
+    # searches all four data directories while it is at it.
+    if [ -n "$app_candidate" ]; then
+      url="--app=$app_url"
+      launch_desktop "$app_candidate" && exit 0
+    fi
+
+    # Nothing can open a chromeless window. The header of this file rules out
+    # swallowing the click, so the web app opens as an ordinary tab instead --
+    # with chrome around it rather than not at all. fallback_url notifies when
+    # even that fails.
+    fallback_url "$app_url"
+    exit $?
+    ;;
+esac
+
 # Whether anything on this machine claims zoommtg:// links.
 #
 # Asked outright, because xdg-open's exit status cannot answer it: with nothing
@@ -323,6 +513,12 @@ if [ "$zoom_direct" -eq 1 ]; then
      && zoom_handler_exists; then
     xdg-open "$uri" >/dev/null 2>&1 && exit 0
   fi
+  fallback_url "$url"
+  exit $?
+fi
+
+if [ "$force_fallback" -eq 1 ]; then
+  [ -n "$url" ] || exit 1
   fallback_url "$url"
   exit $?
 fi

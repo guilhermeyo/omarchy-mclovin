@@ -100,6 +100,14 @@ Item {
   property string browserCompanionError: ""
   readonly property bool browserCompanionRegistered:
     browserCompanion.registeredBrowsers && browserCompanion.registeredBrowsers.length > 0
+
+  // Somewhere for `manage install` to put the bridge. A Chromium-family profile
+  // under ~/.config is what it looks for, and on a Firefox-only desktop there is
+  // none -- so the panel offered a button whose only outcome was an error.
+  readonly property bool browserCompanionInstallable: {
+    var list = (root.browserCompanion && root.browserCompanion.installableBrowsers) || []
+    return list.length > 0
+  }
   readonly property bool browserCompanionConnected: browserCompanion.connected === true
 
   // Every installed web browser, minus ourselves. Recomputed whenever the
@@ -352,31 +360,39 @@ Item {
     var parsed = Router.parseUrl(target)
     var rule = Router.firstMatch(root.rules, parsed)
 
+    var reason = ""
     if (rule) {
       if (launch(rule, target)) {
         record(targetName(rule), Router.ruleLabel(rule), target)
         return "routed"
       }
-      // The rule names a browser that is no longer installed. Asking beats
-      // silently swallowing the click.
+      // The rule names a destination that is no longer installed. Asking beats
+      // silently swallowing the click -- and the picker says why it appeared,
+      // because lastError already knows and used to be thrown away here.
+      reason = root.lastError
     } else if (root.fallbackBrowser && !wantPrivate) {
       var fallback = { browser: root.fallbackBrowser, profile: root.config.fallbackProfile || "" }
       if (launch(fallback, target)) {
         record(targetName(fallback), "", target)
         return "routed"
       }
+      reason = root.lastError
     }
 
-    return ask(target, wantPrivate === true) ? "asked" : "failed"
+    return ask(target, wantPrivate === true, reason) ? "asked" : "failed"
   }
 
   // Opens the picker overlay with the URL in flight. The overlay is a separate
   // kind on this same plugin, so summoning by our own id reaches it.
-  function ask(url, wantPrivate) {
+  function ask(url, wantPrivate, reason) {
     if (!root.shell || typeof root.shell.summon !== "function") return false
     return root.shell.summon(root.pluginId, JSON.stringify({
       url: String(url || ""),
-      private: wantPrivate === true
+      private: wantPrivate === true,
+      // Why the picker opened, when it opened because a rule could not be
+      // honoured. The picker shows it in place of the key hints, which is where
+      // it already shows the same class of message after a failed pick.
+      reason: String(reason || "")
     })) === true
   }
 
@@ -432,7 +448,22 @@ Item {
         return false
       }
       root.lastLaunch = { command: target.command, argv: cmdArgv }
-      Quickshell.execDetached(cmdArgv)
+
+      // execDetached reports nothing back, so a command whose binary is not
+      // installed was counted, written to stats as a route, and answered
+      // "routed" to the shim -- which then exited 0 without reaching its own
+      // fallback. The link was gone and every layer said it had worked.
+      //
+      // The launch goes through sh so the outcome can be acted on where it is
+      // known: run the command if it exists, and if it does not, hand the link
+      // back to mclovin-open with --fallback, which opens it in the fallback
+      // browser and notifies if even that fails. The URL is a positional
+      // argument throughout and never becomes shell source.
+      Quickshell.execDetached(["sh", "-c",
+        'helper=$1; link=$2; shift 2\n'
+        + 'if command -v "$1" >/dev/null 2>&1; then exec "$@"; fi\n'
+        + 'exec "$helper" --fallback "$link"\n',
+        "sh", root.handlerScript, String(url || "")].concat(cmdArgv))
       return true
     }
 

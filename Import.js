@@ -96,8 +96,17 @@ function parseMclovinToml(text) {
       section = "handler.browser"
       continue
     }
+    // The CLI's web app browser is this plugin's `webapp` key under another
+    // name -- both answer "which browser opens a chromeless --app window". It
+    // used to fall into the catch-all below and be dropped, leaving a migrant
+    // on a key no screen writes, with nothing in it.
+    if (line === "[webapp]" || line === "[webapp.browser]") {
+      flush()
+      section = (line === "[webapp]") ? "webapp" : "webapp.browser"
+      continue
+    }
     if (line.charAt(0) === "[") {
-      // Any other table ([webapp], [[something-else]]) ends the current handler.
+      // Any other table ends the current handler.
       flush()
       section = "other"
       continue
@@ -117,10 +126,27 @@ function parseMclovinToml(text) {
       if (key === "match") current.match = value
       else if (key === "match_regex") current.matchRegex = String(value)
       else if (key === "command") current.command = String(value)
-      else if (key === "browser") current.browser = String(value)
+      else if (key === "browser") {
+        var inline = parseInlineTable(value)
+        if (!inline) current.browser = String(value)
+        else if (inline.command) {
+          // `command` plus its args, joined the way expandCommand tokenizes it.
+          var argv = [String(inline.command)]
+          var args = inline.args
+          if (args && typeof args.length === "number" && typeof args !== "string") {
+            for (var a = 0; a < args.length; a++) argv.push(String(args[a]))
+          }
+          current.command = argv.join(" ")
+        } else if (inline.name) {
+          current.browser = String(inline.name)
+          if (inline.profile) current.profile = String(inline.profile)
+        }
+      }
       else if (key === "rewrite") current.rewrite = String(value)
       continue
     }
+    if (section === "webapp" && key === "browser") out.webapp = String(value)
+    if (section === "webapp.browser" && key === "name") out.webapp = String(value)
     if (section === "" && key === "fallback_browser") out.fallback = String(value)
   }
 
@@ -151,6 +177,51 @@ function resolveBrowserId(browsers, value) {
 }
 
 // Imported rules resolved against the installed browsers, in file order.
+// Split on commas at depth 0 and outside quotes, so an `args = [...]` inside an
+// inline table stays in one piece.
+function splitInline(body) {
+  var out = []
+  var buf = ""
+  var quote = ""
+  var depth = 0
+  for (var i = 0; i < body.length; i++) {
+    var c = body.charAt(i)
+    if (quote) { if (c === quote) quote = ""; buf += c; continue }
+    if (c === "\"" || c === "'") { quote = c; buf += c; continue }
+    if (c === "[" || c === "{") depth++
+    if (c === "]" || c === "}") depth--
+    if (c === "," && depth === 0) { if (buf.trim()) out.push(buf.trim()); buf = ""; continue }
+    buf += c
+  }
+  if (buf.trim()) out.push(buf.trim())
+  return out
+}
+
+// A TOML inline table, as the CLI writes a handler target:
+//
+//   browser = { command = "spotify", args = ["--uri={url}"] }
+//   browser = { name = "Chromium", profile = "Work" }
+//
+// parseTomlValue understands quoted strings and arrays only, so the raw `{ … }`
+// fragment was stored as a browser NAME -- producing a rule that matched links
+// and could never launch, because no installed browser is called that.
+//
+// The command shape maps exactly onto this plugin's own `command` target:
+// expandCommand substitutes {url}, which is the same placeholder the CLI writes.
+function parseInlineTable(raw) {
+  var text = String(raw || "").trim()
+  if (text.charAt(0) !== "{" || text.charAt(text.length - 1) !== "}") return null
+
+  var out = {}
+  var parts = splitInline(text.slice(1, -1))
+  for (var i = 0; i < parts.length; i++) {
+    var eq = parts[i].indexOf("=")
+    if (eq === -1) continue
+    out[parts[i].slice(0, eq).trim()] = parseTomlValue(parts[i].slice(eq + 1))
+  }
+  return out
+}
+
 function resolveImported(imported, browsers) {
   var out = []
   var rules = (imported && imported.rules) || []
@@ -168,38 +239,48 @@ function resolveImported(imported, browsers) {
   return out
 }
 
-// How many of the CLI's rules the config does not already carry. Compared on
-// the matcher alone: a rule for the same pattern pointing somewhere else is an
-// edit the user made here, not something to re-import.
-function countNewRules(config, imported, browsers) {
+// The rules in the CLI's file that this config does not already carry, in file
+// order. Compared on the matcher alone: a rule for the same pattern pointing
+// somewhere else is an edit the user made here, not something to re-import.
+//
+// One function, because the panel's label and the import's effect have to be
+// the same set. They were written twice and drifted: the count excluded rules
+// whose matcher was already present, while the merge DROPPED those same rules
+// from the config and replaced them with the CLI's version. The panel offered
+// "Import 2 new rules" and quietly overwrote five edited ones.
+function newRules(config, imported, browsers) {
   var current = Router.normalizeConfig(config)
   var have = {}
   for (var i = 0; i < current.rules.length; i++) have[Router.ruleKey(current.rules[i])] = true
 
   var incoming = resolveImported(imported, browsers)
-  var count = 0
+  var out = []
   for (var j = 0; j < incoming.length; j++) {
-    if (!have[Router.ruleKey(incoming[j])]) count++
+    if (!have[Router.ruleKey(incoming[j])]) out.push(incoming[j])
   }
-  return count
+  return out
+}
+
+function countNewRules(config, imported, browsers) {
+  return newRules(config, imported, browsers).length
 }
 
 // Merge an imported rules.toml into an existing config. Imported rules land
 // first and in file order, because mclovin's router is also first-match-wins and
-// the user already ordered them specific-to-general.
+// the user already ordered them specific-to-general. Nothing already in the
+// config is touched.
 function mergeImported(config, imported, browsers) {
   var next = Router.normalizeConfig(config)
-  var incoming = resolveImported(imported, browsers)
+  next.rules = newRules(config, imported, browsers).concat(next.rules)
 
-  var seen = {}
-  for (var j = 0; j < incoming.length; j++) seen[Router.ruleKey(incoming[j])] = true
-
-  var kept = []
-  for (var k = 0; k < next.rules.length; k++) {
-    if (!seen[Router.ruleKey(next.rules[k])]) kept.push(next.rules[k])
+  // The CLI's web app browser, but never over one already set here, and never a
+  // browser that is not installed -- an unresolvable value in this key is worse
+  // than an empty one, because mclovin-open skips an empty key and moves to the
+  // fallback while a wrong one it cannot resolve is skipped too, silently.
+  if (!next.webapp && imported && imported.webapp) {
+    var id = resolveBrowserId(browsers, imported.webapp)
+    if (id) next.webapp = id
   }
-
-  next.rules = incoming.concat(kept)
 
   // `fallback_browser` is deliberately NOT imported. In the CLI it is an
   // emergency backstop used only when the picker cannot open; here it means

@@ -140,7 +140,7 @@ Item {
     return where + " · " + whenWord(root.rememberWhen)
   }
 
-  function reset(nextUrl, startPrivate) {
+  function reset(nextUrl, startPrivate, reason) {
     root.url = String(nextUrl || "")
     root.filterText = ""
     root.selectedIndex = 0
@@ -153,7 +153,10 @@ Item {
     root.wantPrivate = startPrivate === true
     root.rememberWhen = Router.WHEN_HOST
     root.rememberTerm = root.host
-    root.errorText = ""
+    // Why the picker opened, when a rule named a destination that could not be
+    // run. It goes where a failed pick's message goes, because it is the same
+    // kind of news and the same moment for reading it.
+    root.errorText = String(reason || "")
   }
 
   function takeFocus() { keyCatcher.forceActiveFocus() }
