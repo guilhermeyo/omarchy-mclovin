@@ -34,6 +34,8 @@ jobs:
             qml6-module-qtquick \
             qml6-module-qttest \
             qml6-module-qtqml-workerscript \
+            qml6-module-qtquick-window \
+            qml6-module-qtqml-models \
             jq
           test -x /usr/lib/qt6/bin/qmltestrunner
           test -x /usr/lib/qt6/bin/qmlformat
