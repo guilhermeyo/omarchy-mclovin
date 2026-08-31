@@ -16,14 +16,30 @@ async function fetchRules() {
   return response && Array.isArray(response.rules) ? response.rules : [];
 }
 
+// The in-flight fetch, so the frames of one page share it.
+//
+// Every frame asks on load, and `if (cachedRules)` is only false until the
+// first answer arrives -- so a page with a dozen iframes spawned a dozen
+// native-host processes to compute the same list. Awaiting the promise instead
+// of the value collapses them into one.
+let rulesInFlight = null;
+
 async function rules() {
   if (cachedRules) return cachedRules;
+  if (rulesInFlight) return rulesInFlight;
+  rulesInFlight = (async () => {
+    try {
+      return await fetchRules();
+    } catch (_) {
+      // The bridge may not be registered yet. Answer with nothing to watch, so
+      // every page behaves as though the extension were not installed.
+      return [];
+    }
+  })();
   try {
-    cachedRules = await fetchRules();
-  } catch (_) {
-    // The bridge may not be registered yet. Answer with nothing to watch, so
-    // every page behaves as though the extension were not installed.
-    cachedRules = [];
+    cachedRules = await rulesInFlight;
+  } finally {
+    rulesInFlight = null;
   }
   return cachedRules;
 }
@@ -99,9 +115,15 @@ chrome.runtime.onInstalled.addListener(() => { createMenu(); reportConnected(); 
 chrome.runtime.onStartup.addListener(() => { createMenu(); reportConnected(); });
 reportConnected();
 
-// mclovin's config changed under us, most likely because a rule was added. The
-// panel drives this; there is nothing to poll.
-chrome.runtime.onMessageExternal.addListener(() => { cachedRules = null; });
+// The cache is refreshed by the handshake, which runs on install, on browser
+// start, and every time the service worker wakes -- which is what happens after
+// it has been idle, which is what happens between the rule being added and the
+// next link being clicked.
+//
+// There used to be a chrome.runtime.onMessageExternal listener here claiming
+// the panel drove invalidation. Nothing may send to this extension --
+// externally_connectable is not declared -- so it could never fire, and the
+// comment described a mechanism that did not exist.
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return false;

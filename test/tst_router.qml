@@ -200,6 +200,54 @@ TestCase {
     compare(twice.rules.length, 2)
   }
 
+  // The CLI writes a handler target as an inline table. parseTomlValue reads
+  // quoted strings and arrays only, so the raw `{ … }` fragment was stored as a
+  // browser NAME -- a rule that matched links and could never launch, because no
+  // installed browser is called that.
+  function test_an_inline_table_target_becomes_a_real_destination() {
+    var toml =
+      "[[handler]]\n" +
+      "match = [\"open.spotify.com\"]\n" +
+      "browser = { command = \"spotify\", args = [\"--uri={url}\"] }\n" +
+      "\n" +
+      "[[handler]]\n" +
+      "match = [\"docs.example\"]\n" +
+      "browser = { name = \"Chromium\", profile = \"Work\" }\n" +
+      "\n" +
+      "[webapp]\n" +
+      "browser = \"Chromium\"\n"
+
+    var parsed = Import.parseMclovinToml(toml)
+    compare(parsed.rules.length, 2)
+    compare(parsed.rules[0].command, "spotify --uri={url}")
+    compare(parsed.rules[1].browser, "Chromium")
+    compare(parsed.rules[1].profile, "Work")
+    compare(parsed.webapp, "Chromium")
+
+    var browsers = [{ id: "chromium", name: "Chromium" }]
+    var merged = Import.mergeImported({ rules: [] }, parsed, browsers)
+
+    var byTerm = {}
+    for (var i = 0; i < merged.rules.length; i++) byTerm[merged.rules[i].terms[0]] = merged.rules[i]
+
+    // The command target is this plugin's own, with {url} intact -- the same
+    // placeholder expandCommand substitutes.
+    compare(byTerm["open.spotify.com"].command, "spotify --uri={url}")
+    verify(byTerm["open.spotify.com"].browser === undefined)
+    // And the browser shape keeps its profile.
+    compare(byTerm["docs.example"].browser, "chromium")
+    compare(byTerm["docs.example"].profile, "Work")
+    // The CLI's web app browser comes across, resolved to an installed id.
+    compare(merged.webapp, "chromium")
+  }
+
+  function test_an_existing_webapp_browser_is_never_overwritten() {
+    var parsed = Import.parseMclovinToml("[webapp]\nbrowser = \"Chromium\"\n")
+    var browsers = [{ id: "chromium", name: "Chromium" }, { id: "brave-browser", name: "Brave" }]
+    var merged = Import.mergeImported({ rules: [], webapp: "brave-browser" }, parsed, browsers)
+    compare(merged.webapp, "brave-browser")
+  }
+
   function test_unknown_action_without_another_target_is_dropped() {
     var config = Router.normalizeConfig({
       rules: [{ when: "host", terms: ["example.com"], action: "unknown" }]

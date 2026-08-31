@@ -121,4 +121,46 @@ entry fake-firefox "$bin/fake-firefox"
 config '{"fallback":"fake-chrome"}'
 run 'fake-chrome:https://ordinary.test/' 'an ordinary link still opens' 'https://ordinary.test/'
 
+# A Flatpak-exported browser's Exec is a wrapper: the browser's own arguments
+# begin after the app id, so `--app=` has to land where %U sits and not after
+# argv[0]. Running the first Exec token with the flag bolted on produced
+# `flatpak --app=URL`, which is not a flatpak flag and opens nothing.
+printf '#!/bin/sh\nprintf "flatpak:%%s\\n" "$*" >>"$MCLOVIN_TEST_LOG"\n' >"$bin/fake-flatpak"
+chmod +x "$bin/fake-flatpak"
+cat >"$data/applications/flat-chrome.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=flat-chrome
+Exec=$bin/fake-flatpak run --branch=stable --command=brave com.brave.Browser %U
+Categories=Network;WebBrowser;
+EOF
+config '{"webapp":"flat-chrome"}'
+run 'flatpak:run --branch=stable --command=brave com.brave.Browser --app=https://web.test/' \
+    'a Flatpak browser gets --app where the URL goes' '--app=https://web.test/'
+rm -f "$data/applications/flat-chrome.desktop"
+
+# Service.qml pins fallbackProfile on its own fallback. Ignoring it here put the
+# same link in a different profile depending on whether the shell was up.
+config '{"fallback":"fake-chrome","fallbackProfile":"Work"}'
+run 'fake-chrome:--profile-directory=Work https://profile.test/' \
+    'the fallback honours fallbackProfile' 'https://profile.test/'
+
+config '{"fallback":"fake-firefox","fallbackProfile":"Personal"}'
+run 'fake-firefox:-P Personal https://profile.test/' \
+    'Gecko takes -P, not --profile-directory' 'https://profile.test/'
+
+config '{"fallback":"fake-firefox","fallbackProfile":"/abs/path"}'
+run 'fake-firefox:--profile /abs/path https://profile.test/' \
+    'an absolute Gecko profile uses --profile' 'https://profile.test/'
+
+# first_browser searched two of the four directories the launchers search. This
+# entry lives only in /usr/local's position, reached through XDG_DATA_HOME's
+# sibling, so it is found only if the list is complete.
+rm -f "$data/applications"/*.desktop
+config '{}'
+run EMPTY 'with no entry in any searched directory, nothing launches' 'https://none.test/'
+entry fake-chrome "$bin/fake-chrome"
+config '{}'
+run 'fake-chrome:https://found.test/' 'and it is found again once one exists' 'https://found.test/'
+
 printf 'shim fallback tests passed\n'

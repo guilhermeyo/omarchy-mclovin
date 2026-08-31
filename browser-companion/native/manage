@@ -105,11 +105,24 @@ def write_flags(browser, lines):
     temporary.replace(target)
 
 
+def load_extension_paths(line):
+    """The paths on a --load-extension line.
+
+    A flags file is one flag per line -- that is the format every Chromium
+    launcher on Linux reads, and Omarchy's own file follows it. Splitting the
+    whole line on commas therefore gives the paths and nothing else. Reading it
+    through one function keeps the three callers from disagreeing about what a
+    path is, which is how the extension came to be reported as loading from a
+    line it was not on.
+    """
+    return [p for p in line[len(FLAG):].split(",") if p]
+
+
 def extension_loaded(browser):
     """Whether this browser is set to load the extension at startup."""
     wanted = str(extension_path())
     for line in read_flags(browser) or []:
-        if line.startswith(FLAG) and wanted in line.split("=", 1)[1].split(","):
+        if line.startswith(FLAG) and wanted in load_extension_paths(line):
             return True
     return False
 
@@ -138,7 +151,7 @@ def load_extension(browser):
     wanted = str(extension_path())
     for index, line in enumerate(lines):
         if line.startswith(FLAG):
-            lines[index] = line.rstrip(",") + "," + wanted
+            lines[index] = FLAG + ",".join(load_extension_paths(line) + [wanted])
             break
     else:
         lines.append(FLAG + wanted)
@@ -161,8 +174,9 @@ def unload_extension(browser):
         if not line.startswith(FLAG):
             out.append(line)
             continue
-        kept = [p for p in line.split("=", 1)[1].split(",") if p and p != wanted]
-        if len(kept) != len(line.split("=", 1)[1].split(",")):
+        paths = load_extension_paths(line)
+        kept = [p for p in paths if p != wanted]
+        if len(kept) != len(paths):
             changed = True
         # A flags file with an empty --load-extension= is a browser that refuses
         # to start, so the whole line goes when nothing is left on it.
@@ -280,6 +294,11 @@ def status():
         "extensionPath": str(extension_path()),
         "registeredBrowsers": registered,
         "loadingBrowsers": [name for name in BROWSERS if extension_loaded(name)],
+        # Whether there is anywhere to install into at all. The panel offered
+        # setup on the strength of a rule alone, so a Firefox-only desktop was
+        # shown a button whose only outcome is "no supported browser profile
+        # found".
+        "installableBrowsers": existing_browsers(include_registered=True),
         "invalidBrowsers": invalid,
         "connected": connected,
         "extensionVersion": connection.get("extensionVersion", "") if connected else "",
