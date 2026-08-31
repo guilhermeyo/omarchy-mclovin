@@ -6,6 +6,23 @@
 
 var CONFIG_VERSION = 1
 
+// Built-in destinations do more than choose a browser. Keeping their stable
+// ids in the rule instead of writing an installation-specific command path
+// makes the config portable between machines and plugin locations.
+var ACTION_ZOOM = "zoom"
+
+// Presets are editable starting points, not a second kind of saved rule. The
+// stable ids live here so the form can render a library without growing one
+// button and one handler per preset.
+var PRESET_CUSTOM = "custom"
+var PRESET_ZOOM_MEETING = "zoom-meeting"
+
+// The ready-made Zoom rule only catches numbered meeting links on zoom.us or
+// one of its subdomains. The launcher validates the URL again before turning it
+// into a zoommtg:// URI; this pattern is the routing/preview half, not the trust
+// boundary.
+var ZOOM_MEETING_PATTERN = "^https://([a-z0-9-]+\\.)*zoom\\.us/(j|w|wc/join)/[0-9-]+(?:[/?#]|$)"
+
 // ---------------------------------------------------------------- URL pieces
 
 // A hand-rolled parser instead of `new URL()`: QML's JS engine has it, but it
@@ -223,6 +240,7 @@ function ruleSummary(rule) {
 
 function ruleTargetLabel(rule) {
   if (!rule) return ""
+  if (rule.action === ACTION_ZOOM) return "Zoom directly"
   if (rule.command) return rule.command
   if (rule.webapp) return String(rule.webapp).replace(/\.desktop$/, "")
   var target = String(rule.browser || "")
@@ -388,10 +406,10 @@ function normalizeConfig(raw) {
   }
 }
 
-// A rule needs somewhere to send the URL — a desktop entry (optionally with a
-// browser profile), an Omarchy web app, or a raw command line containing {url}.
-// Anything without a matcher or without a target is dropped rather than kept as
-// a rule that can never fire.
+// A rule needs somewhere to send the URL — a built-in action, an Omarchy web
+// app, a desktop entry (optionally with a browser profile), or a raw command
+// line containing {url}. Anything without a matcher or without a target is
+// dropped rather than kept as a rule that can never fire.
 function normalizeRule(raw) {
   if (!raw || typeof raw !== "object") return null
 
@@ -413,10 +431,13 @@ function normalizeRule(raw) {
 
   var out = { when: when, terms: terms }
 
+  var action = String(raw.action || "").trim()
   var command = String(raw.command || "").trim()
   var webapp = String(raw.webapp || "").trim()
   var browser = String(raw.browser || "").trim()
-  if (command) {
+  if (action === ACTION_ZOOM) {
+    out.action = action
+  } else if (command) {
     out.command = command
   } else if (webapp) {
     // A web app carries neither of the two modifiers a browser target takes: it
@@ -438,16 +459,63 @@ function normalizeRule(raw) {
   return out
 }
 
-function makeRule(when, terms, browser, profile, command, wantPrivate, webapp) {
+// The last parameter carries a destination that is neither a browser nor a
+// command: `{ webapp }` for an Omarchy web app, `{ action }` for a built-in.
+// One object rather than one positional argument each — the third and fourth
+// kinds of destination arrived together, and a seventh, eighth and ninth
+// positional string that every other call site has to pass as "" is how a
+// signature stops being readable.
+function makeRule(when, terms, browser, profile, command, wantPrivate, target) {
   return normalizeRule({
     when: when,
     terms: terms,
     browser: browser,
     profile: profile,
     command: command,
-    webapp: webapp,
+    webapp: (target || {}).webapp,
+    action: (target || {}).action,
     private: wantPrivate === true
   })
+}
+
+// One click in the form produces the narrow rule users otherwise have to type
+// as an advanced regular expression. It is still an ordinary editable rule in
+// config; the preset only supplies the safe defaults.
+function zoomPresetRule() {
+  return makeRule(WHEN_REGEX, [ZOOM_MEETING_PATTERN], "", "", "", false, { action: ACTION_ZOOM })
+}
+
+// Keep the preset catalogue as data. The form only knows how to apply the rule
+// and sample URL in a selected entry, so future presets do not require QML UI
+// changes. A fresh object is returned on every call to keep form edits from
+// mutating the shared library.
+function rulePresets() {
+  return [{
+    id: PRESET_ZOOM_MEETING,
+    label: "Zoom meeting → Zoom directly",
+    description: "Numbered Zoom meeting links, opened with the Zoom protocol.",
+    category: "Meetings",
+    testUrl: "https://us02web.zoom.us/j/123456789?pwd=example",
+    rule: zoomPresetRule()
+  }]
+}
+
+function rulePreset(id) {
+  var wanted = String(id || "")
+  var presets = rulePresets()
+  for (var i = 0; i < presets.length; i++) {
+    if (presets[i].id === wanted) return presets[i]
+  }
+  return null
+}
+
+function rulePresetOptions() {
+  var options = [{ value: PRESET_CUSTOM, label: "Custom rule" }]
+  var presets = rulePresets()
+  for (var i = 0; i < presets.length; i++) {
+    options.push({ value: presets[i].id, label: presets[i].label })
+  }
+  return options
 }
 
 // Replacing an existing rule for the same matcher rather than appending keeps
@@ -456,7 +524,7 @@ function makeRule(when, terms, browser, profile, command, wantPrivate, webapp) {
 function upsertRule(config, when, term, browser, profile, wantPrivate, webapp) {
   var next = normalizeConfig(config)
   var candidate = makeRule(isWhen(when) ? when : WHEN_HOST, [term],
-                           browser, profile, "", wantPrivate, webapp)
+                           browser, profile, "", wantPrivate, { webapp: webapp })
   if (!candidate) return next
   return replaceOrAppend(next, candidate)
 }

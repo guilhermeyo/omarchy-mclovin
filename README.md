@@ -184,9 +184,20 @@ it for you.
 them matching is enough, so `example.com` and `example.org` live in one rule instead of
 two.
 
-**Open it in…** is either a browser — picked from the same browser·profile list
-the picker shows, never a field you have to guess the spelling of — or a command
-with `{url}` in it.
+**Open it in…** is a browser — picked from the same browser·profile list the
+picker shows, never a field you have to guess the spelling of — a command with
+`{url}` in it, or the built-in **Zoom directly** target.
+
+**Start from…** is a preset library above the form. **Custom rule** keeps the
+ordinary editor defaults; **Zoom meeting → Zoom directly** fills the editable
+form with a narrow rule for numbered Zoom meeting links and selects **Zoom
+directly**. New presets are data-driven entries in `Router.js`, so the library
+can grow without adding one-off controls to the form. The Zoom target changes
+an ordinary `https://…zoom.us/j/…` link into `zoommtg://` before a browser opens. A native
+Zoom installation can own that protocol; on stock Omarchy its registered
+handler opens the meeting in a chromeless Zoom webapp. If the protocol cannot
+launch, mclovin sends the original HTTPS link to the configured fallback
+browser instead.
 
 **Preview** is the part that makes the rest trustworthy:
 
@@ -248,7 +259,7 @@ editing it by hand still works — the plugin watches it and reloads.
   "rules": [
     { "when": "startsWith", "terms": ["github.com/acme"], "browser": "chromium", "profile": "Work" },
     { "when": "host", "terms": ["example.com", "example.org"], "browser": "firefox" },
-    { "when": "contains", "terms": ["zoom.us"], "command": "zoom {url}" },
+    { "when": "regex", "terms": ["^https://([a-z0-9-]+\\.)*zoom\\.us/(j|w|wc/join)/[0-9-]+(?:[/?#]|$)"], "action": "zoom" },
     { "when": "host", "terms": ["hedge.example"], "browser": "firefox", "profile": "Personal", "private": true },
     { "when": "regex", "terms": ["^https?://(\\w+)\\.internal\\."], "browser": "chromium" }
   ]
@@ -265,6 +276,8 @@ still read and is migrated to the above the next time anything is saved.
 
 Targets, one per rule:
 
+- `action` — a built-in destination. `zoom` converts numbered Zoom meeting
+  links to `zoommtg://` and falls back to the original HTTPS link when needed.
 - `browser` — a desktop entry id, with or without the `.desktop` suffix.
 - `profile` — optional, alongside `browser`. Name it the way the browser's
   profile switcher does ("Work", not "Profile 3"); mclovin resolves the mapping
@@ -354,9 +367,10 @@ one desktop entry:
 ~/.local/share/applications/io.github.guilhermeyo.mclovin.desktop
 ```
 
-pointing at `mclovin-open`, a ten-line shell script in this repo whose entire job
-is to hand the URL to the shell over IPC. It then runs `xdg-mime default` for
-both schemes.
+pointing at `mclovin-open`, a shell shim in this repo whose main job is to hand
+the URL to the shell over IPC. It also owns fallback launching and built-in
+targets that must observe whether an external protocol handler succeeds. The
+plugin then runs `xdg-mime default` for both schemes.
 
 If the shell is not running when a link is clicked, the script falls back to
 launching your configured `fallback` browser directly, and failing that, the
