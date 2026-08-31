@@ -52,8 +52,51 @@ async function browserFallback(sender, url, newTab) {
   }
 }
 
-chrome.runtime.onInstalled.addListener(reportConnected);
-chrome.runtime.onStartup.addListener(reportConnected);
+// ------------------------------------------------------------ context menu
+//
+// The click interception deliberately leaves rules that name a browser alone: a
+// link already headed for the browser you are reading in should navigate the
+// tab, and only the browser can do that. This is the way to ask anyway, and it
+// is not limited to watched rules — right-clicking a link and choosing mclovin
+// is as explicit as a gesture gets, so it routes whatever was clicked. A link
+// no rule claims reaches the picker, which is the honest answer to "let me
+// choose where this goes".
+const MENU_ID = "mclovin-open-link";
+
+function createMenu() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: MENU_ID,
+      title: "Open link with mclovin",
+      contexts: ["link"],
+      targetUrlPatterns: ["http://*/*", "https://*/*"],
+    });
+  });
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== MENU_ID || !info.linkUrl) return;
+  try {
+    const response = await chrome.runtime.sendNativeMessage(HOST, {
+      type: "openUrl",
+      url: info.linkUrl,
+      version: chrome.runtime.getManifest().version,
+    });
+    if (!response || response.ok !== true)
+      throw new Error((response && response.error) || "mclovin did not open the link");
+  } catch (_) {
+    // Nothing was cancelled here — the page never saw this gesture — so the
+    // fallback opens a tab rather than replacing the one being read.
+    await chrome.tabs.create({
+      url: info.linkUrl,
+      active: true,
+      ...(tab && tab.id !== undefined ? { openerTabId: tab.id } : {}),
+    });
+  }
+});
+
+chrome.runtime.onInstalled.addListener(() => { createMenu(); reportConnected(); });
+chrome.runtime.onStartup.addListener(() => { createMenu(); reportConnected(); });
 reportConnected();
 
 // mclovin's config changed under us, most likely because a rule was added. The

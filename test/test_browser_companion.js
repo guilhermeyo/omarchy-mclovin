@@ -93,6 +93,8 @@ async function testBackgroundBridge() {
   const tabCreates = [];
   const lifecycleListeners = {};
   let messageListener;
+  let menuListener;
+  const menuItems = [];
   let nativeFailure = null;
   let tabFailure = null;
 
@@ -111,6 +113,11 @@ async function testBackgroundBridge() {
         onStartup: { addListener: listener => { lifecycleListeners.startup = listener; } },
         onMessage: { addListener: listener => { messageListener = listener; } },
         onMessageExternal: { addListener: () => {} },
+      },
+      contextMenus: {
+        removeAll: done => { done(); },
+        create: options => { menuItems.push(options); },
+        onClicked: { addListener: listener => { menuListener = listener; } },
       },
       tabs: {
         create: async options => { if (tabFailure) throw tabFailure; tabCreates.push(options); },
@@ -133,6 +140,7 @@ async function testBackgroundBridge() {
   assert.strictEqual(nativeMessages[0].host, "io.github.guilhermeyo.mclovin");
   assert.ok(lifecycleListeners.installed);
   assert.ok(lifecycleListeners.startup);
+  assert.ok(menuListener, "the context menu must be wired before any click");
 
   const ask = (message, sender) => new Promise(resolve => {
     assert.strictEqual(messageListener(message, sender, resolve), true);
@@ -187,6 +195,53 @@ async function testBackgroundBridge() {
     { tab: { id: 11 } },
   );
   assert.strictEqual(unhandled.ok, false);
+
+  // ------------------------------------------------------------ context menu
+  //
+  // The click interception leaves rules naming a browser alone. This is the way
+  // to ask anyway, and it is not limited to watched rules: right-clicking a link
+  // and choosing mclovin is as explicit as a gesture gets.
+  tabFailure = null;
+  nativeFailure = null;
+  tabCreates.length = 0;
+
+  lifecycleListeners.installed();
+  assert.strictEqual(menuItems.length, 1, "one menu item, recreated rather than duplicated");
+  assert.strictEqual(menuItems[0].title, "Open link with mclovin");
+  // Spread first: arrays built inside the vm context carry that realm's
+  // prototype, and deepStrictEqual compares prototypes.
+  assert.deepStrictEqual([...menuItems[0].contexts], ["link"]);
+  assert.deepStrictEqual([...menuItems[0].targetUrlPatterns], ["http://*/*", "https://*/*"]);
+
+  // A link no rule claims still goes to mclovin, which is what the gesture
+  // means. The click interception would have left this one alone.
+  const beforeMenu = nativeMessages.length;
+  await menuListener(
+    { menuItemId: "mclovin-open-link", linkUrl: "https://github.com/acme/app" },
+    { id: 3 },
+  );
+  assert.strictEqual(nativeMessages.length, beforeMenu + 1);
+  assert.strictEqual(nativeMessages.at(-1).message.type, "openUrl");
+  assert.strictEqual(nativeMessages.at(-1).message.url, "https://github.com/acme/app");
+  assert.deepStrictEqual(tabCreates, []);
+
+  // Another extension's menu item must not be answered.
+  await menuListener(
+    { menuItemId: "somebody-else", linkUrl: "https://example.test/" },
+    { id: 3 },
+  );
+  assert.strictEqual(nativeMessages.length, beforeMenu + 1);
+
+  // Bridge down. Nothing was cancelled here, so this opens a tab rather than
+  // replacing the one being read.
+  nativeFailure = new Error("host unavailable");
+  await menuListener(
+    { menuItemId: "mclovin-open-link", linkUrl: "https://example.test/x" },
+    { id: 3 },
+  );
+  assert.strictEqual(tabCreates.length, 1);
+  assert.strictEqual(tabCreates[0].url, "https://example.test/x");
+  assert.strictEqual(tabCreates[0].openerTabId, 3);
 }
 
 testBackgroundBridge()
