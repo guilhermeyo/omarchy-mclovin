@@ -2,7 +2,7 @@
 
 Choose which browser opens every link.
 
-![The mclovin bar widget, showing four routing rules](preview.png)
+![The picker in the middle of the screen, listing browsers one row per profile](preview.png)
 
 Click a link and mclovin puts a picker in the middle of the screen listing the
 browsers you have installed — one row per profile, so "Chromium · Work" and
@@ -17,11 +17,10 @@ rules could take the same link the narrower one wins, so there is no ordering to
 maintain.
 
 <p align="center">
-  <img src="preview-picker.png" width="49%" alt="The browser picker, listing four browsers with their profiles">
-  <img src="preview-picker-rule.png" width="49%" alt="The same picker with Always ticked, showing the term field and the Site, Path and Contains shapes">
+  <img src="preview-picker-rule.png" width="82%" alt="The same picker with Always ticked, showing the term field and the Site, Path and Contains shapes">
 </p>
 <p align="center">
-  <img src="preview-form.png" width="72%" alt="The rule form, with matcher, destination, and a live preview">
+  <img src="preview-form.png" width="82%" alt="The rule form, with matcher, destination, and a live preview">
 </p>
 
 Everything runs inside `omarchy-shell` as QML. There is no daemon, no compiled
@@ -45,6 +44,8 @@ That puts the bar widget on the right side of the bar. Click it, then click
 
 Until you do that, the bar icon stays in the theme's urgent colour — links are
 still opening, just not through mclovin.
+
+![The bar widget's drop-down, showing four routing rules](preview-panel.png)
 
 ## Using it
 
