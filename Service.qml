@@ -201,6 +201,13 @@ Item {
     setConfig(next)
   }
 
+  // Every scheme the native-app table names, so a rule can ask about any of
+  // them without a round trip at click time.
+  function scanNativeHandlers() {
+    var apps = Router.nativeApps()
+    for (var i = 0; i < apps.length; i++) scanHandlers(apps[i].scheme)
+  }
+
   function scanHandlers(scheme) {
     if (!scheme || handlerScan.running) return
     root.pendingHandlerScheme = String(scheme)
@@ -442,7 +449,8 @@ Item {
     // Asked here rather than inside launch(), because launch() answering true
     // for "a question was posed" would have route() record a link that has not
     // opened yet and answer "routed" to a caller that is still waiting.
-    var scheme = rule ? Browsers.actionScheme(rule.action) : ""
+    var nativeApp = (rule && Router.isNativeAction(rule.action)) ? Router.nativeAppFor(target) : null
+    var scheme = nativeApp ? nativeApp.scheme : ""
     if (scheme && !chosenHandler(scheme) && handlersFor(scheme).length > 1) {
       root.lastError = ""
       return askHandler(scheme, target, rule) ? "asked" : "failed"
@@ -485,12 +493,15 @@ Item {
 
   // Called by the picker once an application has been chosen for a scheme.
   function chooseHandler(scheme, path, url, remember) {
+    var app = Router.nativeAppFor(url)
+    if (!app) return false
     if (remember) rememberHandler(scheme, path)
-    var argv = [root.handlerScript, "--zoom-direct", "--handler=" + String(path || ""),
+    var argv = [root.handlerScript, "--native=" + app.id, "--handler=" + String(path || ""),
                 String(url || "")]
-    root.lastLaunch = { action: Router.ACTION_ZOOM, handler: String(path || ""), argv: argv }
+    root.lastLaunch = { action: Router.ACTION_NATIVE, app: app.id,
+                        handler: String(path || ""), argv: argv }
     Quickshell.execDetached(argv)
-    record("Zoom directly", "", url)
+    record("Its native app", "", url)
     return true
   }
 
@@ -537,13 +548,21 @@ Item {
     root.lastError = ""
     if (!target) return false
 
-    if (target.action === Router.ACTION_ZOOM) {
-      var chosen = chosenHandler(Browsers.actionScheme(target.action))
-      var zoomArgv = [root.handlerScript, "--zoom-direct"]
-      if (chosen) zoomArgv.push("--handler=" + chosen)
-      zoomArgv.push(String(url || ""))
-      root.lastLaunch = { action: target.action, handler: chosen, argv: zoomArgv }
-      Quickshell.execDetached(zoomArgv)
+    if (Router.isNativeAction(target.action)) {
+      var app = Router.nativeAppFor(url)
+      if (!app) {
+        // The rule says "its native app" and this link has none. Saying so beats
+        // handing the browser a link the rule meant to keep out of it without a
+        // word, and route() falls through to the fallback or the picker.
+        root.lastError = "No native application is known for links like " + String(url || "")
+        return false
+      }
+      var chosen = chosenHandler(app.scheme)
+      var argv = [root.handlerScript, "--native=" + app.id]
+      if (chosen) argv.push("--handler=" + chosen)
+      argv.push(String(url || ""))
+      root.lastLaunch = { action: Router.ACTION_NATIVE, app: app.id, handler: chosen, argv: argv }
+      Quickshell.execDetached(argv)
       return true
     }
 
@@ -743,7 +762,7 @@ Item {
   // so the rule rows keep their two-line shape.
   function targetName(target) {
     if (!target) return ""
-    if (target.action === Router.ACTION_ZOOM) return "Zoom directly"
+    if (Router.isNativeAction(target.action)) return "Its native app"
     if (target.command) return String(target.command).split(" ")[0]
     if (target.webapp) {
       var app = webappById(target.webapp)
@@ -872,7 +891,7 @@ Item {
       // Here rather than in Component.onCompleted: this is the point the rest
       // of the startup already treats as "the environment is ready", and a
       // Process started before it does not run.
-      root.scanHandlers("zoommtg")
+      root.scanNativeHandlers()
     }
   }
 
@@ -1014,8 +1033,19 @@ Item {
         // Both reported because this is what someone debugging "my Zoom link
         // went to a browser" needs: how many applications claim the scheme, and
         // which one was chosen.
-        zoomHandlers: handlersFor("zoommtg").length,
-        chosenZoomHandler: chosenHandler("zoommtg"),
+        // What someone debugging "my link went to a browser" needs: for each
+        // site with a native application, how many things claim its scheme and
+        // which one was chosen.
+        nativeApps: (function() {
+          var out = {}
+          var apps = Router.nativeApps()
+          for (var i = 0; i < apps.length; i++) {
+            out[apps[i].id] = { scheme: apps[i].scheme,
+                                claimedBy: handlersFor(apps[i].scheme).length,
+                                chosen: chosenHandler(apps[i].scheme) }
+          }
+          return out
+        })(),
         hasCompanionRule: root.hasCompanionRule,
         rules: root.rules.length,
         fallback: root.fallbackBrowser,
@@ -1035,7 +1065,7 @@ Item {
     function refresh(): string {
       root.refreshBrowsers()
       root.refreshWebapps()
-      root.scanHandlers("zoommtg")
+      root.scanNativeHandlers()
       root.refreshHandler()
       root.reloadFirefoxProfiles()
       root.refreshBrowserCompanion()

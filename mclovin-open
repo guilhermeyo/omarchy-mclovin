@@ -23,7 +23,7 @@ Usage: mclovin-open [URL]
        mclovin-open --app=URL
        mclovin-open --incognito [URL]
        mclovin-open --fallback URL
-       mclovin-open --zoom-direct --handler=PATH URL
+       mclovin-open --native=ID [--handler=PATH] URL
        mclovin-open --zoom-direct URL
 
 With no URL it opens the picker so you can just pick a browser. Registered as
@@ -39,7 +39,7 @@ USAGE
 # opens", for every browser rather than one.
 url=""
 want_private=0
-zoom_direct=0
+native_app=""
 force_fallback=0
 handler_path=""
 
@@ -68,10 +68,19 @@ for argument in "$@"; do
       # in the fallback browser, which is the one thing this file guarantees.
       force_fallback=1
       ;;
+    --native=*)
+      # Which site's conversion to apply. Service.qml picks it from the URL
+      # against the table in Router.js; the id travels rather than being
+      # re-derived here, so the two cannot disagree about which site a link is
+      # on. The URL is validated again below regardless -- that is where a web
+      # URL becomes a URI handed to a desktop application.
+      native_app=${argument#--native=}
+      ;;
     --zoom-direct)
-      # Built-in rule target: the following URL is converted to zoommtg://
-      # after the safe browser fallback helpers below have been defined.
-      zoom_direct=1
+      # The name this carried when Zoom was the only site it knew. Kept so a
+      # rule written then, and anything still passing the old flag, keeps
+      # working.
+      native_app=zoom
       ;;
     # omarchy-launch-browser rewrites its own --private into whichever flag the
     # detected browser wants, so accept the whole family.
@@ -501,7 +510,7 @@ case $url in
     ;;
 esac
 
-# Whether anything on this machine claims zoommtg:// links.
+# Whether anything on this machine claims links of a given scheme.
 #
 # Asked outright, because xdg-open's exit status cannot answer it: with nothing
 # registered for a scheme it searches every mimeapps location, opens nothing and
@@ -512,9 +521,9 @@ esac
 #
 # xdg-mime and xdg-open ship together in xdg-utils, so requiring both costs
 # nothing that was going to work anyway.
-zoom_handler_exists() {
+scheme_handler_exists() {
   command -v xdg-mime >/dev/null 2>&1 || return 1
-  handler=$(xdg-mime query default x-scheme-handler/zoommtg 2>/dev/null) || return 1
+  handler=$(xdg-mime query default "x-scheme-handler/$1" 2>/dev/null) || return 1
   [ -n "$handler" ]
 }
 
@@ -555,15 +564,26 @@ launch_handler_path() {
   return 0
 }
 
-if [ "$zoom_direct" -eq 1 ]; then
-  if uri=$(zoom_join_uri "$url"); then
+# The URI a site's application takes, or nothing. One case per site, because
+# each conversion is that site's own convention and nothing derives one from
+# another. Adding a site is a case here and an entry in Router.js nativeApps().
+native_uri() {
+  case $1 in
+    zoom) zoom_join_uri "$2" ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ -n "$native_app" ]; then
+  if uri=$(native_uri "$native_app" "$url"); then
     # A chosen handler wins over whatever XDG would have picked, which is the
     # point: with two entries claiming the scheme under one id, XDG picks the
     # same one forever and never says which.
     if [ -n "$handler_path" ] && launch_handler_path "$handler_path" "$uri"; then
       exit 0
     fi
-    if command -v xdg-open >/dev/null 2>&1 && zoom_handler_exists; then
+    scheme=${uri%%:*}
+    if command -v xdg-open >/dev/null 2>&1 && scheme_handler_exists "$scheme"; then
       xdg-open "$uri" >/dev/null 2>&1 && exit 0
     fi
   fi

@@ -557,12 +557,6 @@ function parseHandlers(stdout) {
   return out
 }
 
-// The scheme a rule's destination hands its URL to, or "". Only the built-in
-// actions do that; a browser, a web app and a command all keep the link.
-function actionScheme(action) {
-  return String(action || "") === "zoom" ? "zoommtg" : ""
-}
-
 // ------------------------------------------------------------------- browsers
 
 // DesktopEntry.categories is a QStringList, which reaches JS as an array-LIKE

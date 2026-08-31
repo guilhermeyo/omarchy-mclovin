@@ -16,9 +16,9 @@ TestCase {
     verify(preset.description.length > 0)
     verify(preset.testUrl.indexOf("https://") === 0)
     compare(rule.when, Router.WHEN_REGEX)
-    compare(rule.action, Router.ACTION_ZOOM)
+    compare(rule.action, Router.ACTION_NATIVE)
     compare(rule.terms.length, 1)
-    compare(Router.ruleTargetLabel(rule), "Zoom directly")
+    compare(Router.ruleTargetLabel(rule), "Its native app")
     verify(rule.command === undefined)
     verify(rule.browser === undefined)
   }
@@ -82,7 +82,8 @@ TestCase {
     })
 
     compare(config.rules.length, 1)
-    compare(config.rules[0].action, Router.ACTION_ZOOM)
+    // Written under the old name, read back under the new one.
+    compare(config.rules[0].action, Router.ACTION_NATIVE)
     compare(config.rules[0].terms[0], "zoom.us")
   }
 
@@ -91,8 +92,8 @@ TestCase {
   // still has to be dropped when the object names nothing.
   function test_make_rule_takes_a_target_object() {
     var zoom = Router.makeRule(Router.WHEN_HOST, ["zoom.us"], "", "", "", false,
-                               { action: Router.ACTION_ZOOM })
-    compare(zoom.action, Router.ACTION_ZOOM)
+                               { action: Router.ACTION_NATIVE })
+    compare(zoom.action, Router.ACTION_NATIVE)
     verify(zoom.webapp === undefined)
     verify(zoom.browser === undefined)
 
@@ -126,7 +127,7 @@ TestCase {
     var sawWebapp = false, sawAction = false
     for (var i = 0; i < reloaded.rules.length; i++) {
       if (reloaded.rules[i].webapp === "WhatsApp") sawWebapp = true
-      if (reloaded.rules[i].action === Router.ACTION_ZOOM) sawAction = true
+      if (reloaded.rules[i].action === Router.ACTION_NATIVE) sawAction = true
     }
     verify(sawWebapp)
     verify(sawAction)
@@ -280,6 +281,63 @@ TestCase {
   function test_handlers_survive_a_config_with_none() {
     compare(JSON.stringify(Router.normalizeConfig({ rules: [] }).handlers), "{}")
     compare(JSON.stringify(Router.normalizeConfig(null).handlers), "{}")
+  }
+
+  // The destination is "a native app", not "Zoom". A list of destination KINDS
+  // that names one site is wrong the moment a second site is added, and five of
+  // six buttons are then wrong for any given rule.
+  function test_the_native_action_does_not_name_a_site() {
+    var rule = Router.makeRule(Router.WHEN_HOST, ["zoom.us"], "", "", "", false,
+                               { action: Router.ACTION_NATIVE })
+    compare(rule.action, "native")
+    compare(Router.ruleTargetLabel(rule), "Its native app")
+
+    // A rule saved when this was called "zoom" keeps working, and is written
+    // back under the name that does not name a site.
+    var migrated = Router.normalizeRule({ when: "host", terms: ["zoom.us"], action: "zoom" })
+    compare(migrated.action, "native")
+    verify(Router.isNativeAction("zoom"))
+    verify(Router.isNativeAction("native"))
+    verify(!Router.isNativeAction("teleport"))
+
+    // And a config holding the old name round-trips to the new one.
+    var config = Router.normalizeConfig({
+      rules: [{ when: "host", terms: ["zoom.us"], action: "zoom" }],
+    })
+    compare(config.rules[0].action, "native")
+  }
+
+  // Which site a link belongs to is a table lookup, because nothing derives
+  // zoommtg://…confno=1842 from zoom.us/j/1842 except knowing Zoom.
+  function test_a_link_finds_its_native_app_or_none() {
+    compare(Router.nativeAppFor("https://us02web.zoom.us/j/123456789").id, "zoom")
+    compare(Router.nativeAppFor("https://zoom.us/wc/join/987").scheme, "zoommtg")
+    verify(Router.nativeAppFor("https://zoom.us/my/team-room") === null)
+    verify(Router.nativeAppFor("https://zoom.us.evil.example/j/1") === null)
+    verify(Router.nativeAppFor("https://news.ycombinator.com/") === null)
+    verify(Router.nativeAppFor("") === null)
+  }
+
+  // Every entry in the table needs a conversion in mclovin-open under the same
+  // id, and the shim's own suite covers each conversion. If an id is added here
+  // without one there, a rule saves and then opens nothing.
+  function test_every_native_app_is_well_formed() {
+    var apps = Router.nativeApps()
+    verify(apps.length > 0)
+    var seen = {}
+    for (var i = 0; i < apps.length; i++) {
+      var a = apps[i]
+      verify(/^[a-z][a-z0-9-]*$/.test(a.id), "id: " + a.id)
+      verify(/^[a-z][a-z0-9+.-]*$/.test(a.scheme), "scheme: " + a.scheme)
+      verify(String(a.label).length > 0)
+      verify(!seen[a.id], "duplicate id: " + a.id)
+      seen[a.id] = true
+      // The pattern has to compile, and has to be anchored at https -- an
+      // unanchored one would claim links on any site that mentions this one.
+      var re = new RegExp(a.pattern)
+      verify(re.test !== undefined)
+      compare(a.pattern.indexOf("^https://"), 0, "unanchored pattern: " + a.id)
+    }
   }
 
   function test_unknown_action_without_another_target_is_dropped() {

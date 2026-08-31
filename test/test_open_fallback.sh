@@ -208,4 +208,25 @@ run 'xdg-open:zoommtg://zoom.us/join?action=join&confno=333333333' \
     --zoom-direct '--handler=/nonexistent/Zoom.desktop' 'https://zoom.us/j/333333333'
 rm -f "$data/applications/Zoom.desktop"
 
+# --native=ID is the flag that replaced --zoom-direct. Both are accepted, and a
+# rule saved under the old name still works.
+run 'native-zoom:zoommtg://zoom.us/join?action=join&confno=444444444' \
+    '--native=zoom converts and launches' \
+    --native=zoom "--handler=$data/sys/Zoom.desktop" 'https://zoom.us/j/444444444'
+
+run 'native-zoom:zoommtg://zoom.us/join?action=join&confno=555555555' \
+    '--zoom-direct still means --native=zoom' \
+    --zoom-direct "--handler=$data/sys/Zoom.desktop" 'https://zoom.us/j/555555555'
+
+# A site the table does not know converts to nothing, and the link goes to the
+# browser rather than nowhere.
+run 'fake-chrome:https://example.test/x' \
+    'an unknown site falls through to the browser' \
+    --native=nosuchsite 'https://example.test/x'
+
+# The same rejections as before, now reached through the new flag.
+run 'fake-chrome:https://zoom.us.evil.example/j/1' \
+    'a lookalike domain is still refused' \
+    --native=zoom 'https://zoom.us.evil.example/j/1'
+
 printf 'shim fallback tests passed\n'

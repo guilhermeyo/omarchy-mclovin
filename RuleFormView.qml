@@ -94,8 +94,8 @@ Item {
     root.commandText = String(rule.command || "")
     root.wantPrivate = rule.private === true
     root.testUrl = String(preset.testUrl || "")
-    if (rule.action === Router.ACTION_ZOOM) {
-      root.targetKind = "zoom"
+    if (Router.isNativeAction(rule.action)) {
+      root.targetKind = "native"
     } else if (rule.webapp) {
       // Same order normalizeRule reads them in. Without this branch a preset
       // that names a web app would land on "browser" and lose its destination
@@ -223,8 +223,8 @@ Item {
       root.advanced = existing.when === Router.WHEN_REGEX
       var list = existing.terms || []
       for (var i = 0; i < list.length; i++) termModel.append({ value: String(list[i]) })
-      if (existing.action === Router.ACTION_ZOOM) {
-        root.targetKind = "zoom"
+      if (Router.isNativeAction(existing.action)) {
+        root.targetKind = "native"
         root.commandText = ""
         root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
       } else if (existing.command) {
@@ -262,8 +262,8 @@ Item {
     revision
     var t = terms()
     if (t.length === 0) return null
-    if (root.targetKind === "zoom")
-      return Router.makeRule(root.when, t, "", "", "", false, { action: Router.ACTION_ZOOM })
+    if (root.targetKind === "native")
+      return Router.makeRule(root.when, t, "", "", "", false, { action: Router.ACTION_NATIVE })
     if (root.targetKind === "command") {
       var cmd = String(root.commandText).trim()
       if (!cmd) return null
@@ -294,7 +294,7 @@ Item {
 
   readonly property string targetLabel: {
     revision
-    if (root.targetKind === "zoom") return "Zoom directly"
+    if (root.targetKind === "native") return "Its native app"
     if (root.targetKind === "command") return String(root.commandText).trim()
     if (root.targetKind === "webapp") {
       for (var w = 0; w < root.webappOptions.length; w++) {
@@ -625,7 +625,7 @@ Item {
             { value: "browser", label: "A browser" },
             { value: "webapp", label: "A web app" },
             { value: "command", label: "A command" },
-            { value: "zoom", label: "Zoom directly" }
+            { value: "native", label: "A native app" }
           ]
           onChanged: function(value) { root.targetKind = value; root.revision++ }
         }
@@ -716,8 +716,17 @@ Item {
 
         Text {
           Layout.fillWidth: true
-          visible: root.targetKind === "zoom"
-          text: "Turns a numbered Zoom meeting link into zoommtg:// before a browser opens. If the protocol cannot launch, the original link goes to your fallback browser."
+          visible: root.targetKind === "native"
+          // Says what would happen to the link in hand rather than describing
+          // the destination in the abstract, which is what the preview below
+          // does for every other destination.
+          text: {
+            var app = Router.nativeAppFor(root.testUrl || root.example)
+            if (app)
+              return "A link like this becomes " + app.scheme + ":// and goes to the application that owns it, instead of a browser. If nothing can open it, the original link goes to your fallback browser."
+            return "No native application is known for links like this, so they would go to your fallback browser. mclovin knows: "
+              + Router.nativeApps().map(function(a) { return a.label }).join(", ") + "."
+          }
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -726,8 +735,8 @@ Item {
 
         Text {
           Layout.fillWidth: true
-          visible: root.targetKind === "zoom"
-          text: "After you save, the mclovin panel offers an optional Chromium companion for Zoom links clicked inside any website."
+          visible: root.targetKind === "native"
+          text: "After you save, the mclovin panel offers an optional Chromium companion, for links this rule catches that are clicked inside a website."
           color: root.faint
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
