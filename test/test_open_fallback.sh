@@ -38,6 +38,13 @@ entry ghost "$bin/does-not-exist"
 
 printf '#!/bin/sh\nexit 1\n' >"$bin/notify-send"; chmod +x "$bin/notify-send"
 
+# Stubbed so this file is hermetic. Without them the real xdg-open runs, finds
+# the sandbox's own desktop entries through XDG_DATA_HOME, and launches one --
+# which looks like the shim chose it.
+printf '#!/bin/sh\nprintf "xdg-open:%%s\\n" "$1" >>"$MCLOVIN_TEST_LOG"\nexit 0\n' >"$bin/xdg-open"
+printf '#!/bin/sh\nprintf "Zoom.desktop\\n"\n' >"$bin/xdg-mime"
+chmod +x "$bin/xdg-open" "$bin/xdg-mime"
+
 export HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$data"
 export MCLOVIN_TEST_LOG="$log" PATH="$bin:/usr/bin:/bin"
 
@@ -162,5 +169,43 @@ run EMPTY 'with no entry in any searched directory, nothing launches' 'https://n
 entry fake-chrome "$bin/fake-chrome"
 config '{}'
 run 'fake-chrome:https://found.test/' 'and it is found again once one exists' 'https://found.test/'
+
+# Two applications can claim one scheme under one desktop id -- Omarchy's Zoom
+# web app handler and the native client are both Zoom.desktop -- so XDG picks by
+# directory precedence, silently and forever. --handler names the file outright.
+printf '#!/bin/sh\nprintf "native-zoom:%%s\\n" "$*" >>"$MCLOVIN_TEST_LOG"\n' >"$bin/native-zoom"
+printf '#!/bin/sh\nprintf "webapp-zoom:%%s\\n" "$*" >>"$MCLOVIN_TEST_LOG"\n' >"$bin/webapp-zoom"
+chmod +x "$bin/native-zoom" "$bin/webapp-zoom"
+mkdir -p "$data/sys"
+cat >"$data/applications/Zoom.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Zoom
+Exec=$bin/webapp-zoom %u
+MimeType=x-scheme-handler/zoommtg;
+EOF
+cat >"$data/sys/Zoom.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Zoom Workplace
+Exec=$bin/native-zoom %U
+MimeType=x-scheme-handler/zoommtg;
+EOF
+
+config '{}'
+run 'native-zoom:zoommtg://zoom.us/join?action=join&confno=123456789' \
+    'the named handler receives the converted URI' \
+    --zoom-direct "--handler=$data/sys/Zoom.desktop" 'https://zoom.us/j/123456789'
+
+run 'webapp-zoom:zoommtg://zoom.us/join?action=join&confno=222222222' \
+    'a different named handler receives it instead' \
+    --zoom-direct "--handler=$data/applications/Zoom.desktop" 'https://zoom.us/j/222222222'
+
+# A handler that has been uninstalled must not swallow the link: the URI still
+# has xdg-open, and failing that the browser.
+run 'xdg-open:zoommtg://zoom.us/join?action=join&confno=333333333' \
+    'a missing handler falls through to xdg-open rather than dropping the link' \
+    --zoom-direct '--handler=/nonexistent/Zoom.desktop' 'https://zoom.us/j/333333333'
+rm -f "$data/applications/Zoom.desktop"
 
 printf 'shim fallback tests passed\n'

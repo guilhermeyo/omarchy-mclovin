@@ -375,6 +375,21 @@ function firstMatch(rules, parsed) {
   return null
 }
 
+// Scheme -> absolute path of a desktop entry. Anything that is not a bare
+// scheme name mapped to an absolute path is dropped rather than kept as a
+// setting that can never resolve.
+function normalizeHandlers(raw) {
+  var out = {}
+  if (!raw || typeof raw !== "object") return out
+  for (var scheme in raw) {
+    if (!/^[a-z][a-z0-9+.-]*$/i.test(scheme)) continue
+    var path = String(raw[scheme] || "").trim()
+    if (path.charAt(0) !== "/") continue
+    out[scheme.toLowerCase()] = path
+  }
+  return out
+}
+
 function normalizeConfig(raw) {
   var parsed = raw
   if (typeof raw === "string") {
@@ -402,6 +417,15 @@ function normalizeConfig(raw) {
     // Which browser gets `--app=` windows. Never the picker: a webapp launcher
     // asking which browser to use every time would be unusable.
     webapp: String(parsed.webapp || "").trim(),
+    // Which application owns a scheme, keyed by scheme and valued by the
+    // ABSOLUTE PATH of a desktop entry.
+    //
+    // By path because the id is not unique. Two files named Zoom.desktop --
+    // Omarchy's web app handler in ~/.local/share and the native client's in
+    // /usr/share -- both claim zoommtg://, and `xdg-mime query default` answers
+    // "Zoom.desktop" for both. XDG resolves the first, silently, forever. This
+    // key is how someone says which one they meant.
+    handlers: normalizeHandlers(parsed.handlers),
     rules: clean
   }
 }

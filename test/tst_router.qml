@@ -248,6 +248,40 @@ TestCase {
     compare(merged.webapp, "brave-browser")
   }
 
+  // Scheme -> absolute path of a desktop entry. By path, because the id is not
+  // unique: two files named Zoom.desktop claim zoommtg:// on an Omarchy with the
+  // Zoom web app installed, and xdg-mime answers "Zoom.desktop" for either.
+  function test_handlers_are_kept_by_scheme_and_absolute_path() {
+    var config = Router.normalizeConfig({
+      rules: [],
+      handlers: {
+        zoommtg: "/usr/share/applications/Zoom.desktop",
+        ZoomUs: "/usr/share/applications/Zoom.desktop",
+        relative: "applications/Zoom.desktop",
+        "not a scheme": "/usr/share/applications/X.desktop",
+        empty: "",
+      },
+    })
+
+    compare(config.handlers.zoommtg, "/usr/share/applications/Zoom.desktop")
+    // Schemes are case-insensitive, and stored lowercased.
+    compare(config.handlers.zoomus, "/usr/share/applications/Zoom.desktop")
+    // A relative path could never be launched, and a name that is not a scheme
+    // could never be looked up. Neither is kept as a setting that cannot work.
+    verify(config.handlers.relative === undefined)
+    verify(config.handlers["not a scheme"] === undefined)
+    verify(config.handlers.empty === undefined)
+
+    // Survives a save and a reload.
+    var reloaded = Router.normalizeConfig(JSON.stringify(config))
+    compare(reloaded.handlers.zoommtg, "/usr/share/applications/Zoom.desktop")
+  }
+
+  function test_handlers_survive_a_config_with_none() {
+    compare(JSON.stringify(Router.normalizeConfig({ rules: [] }).handlers), "{}")
+    compare(JSON.stringify(Router.normalizeConfig(null).handlers), "{}")
+  }
+
   function test_unknown_action_without_another_target_is_dropped() {
     var config = Router.normalizeConfig({
       rules: [{ when: "host", terms: ["example.com"], action: "unknown" }]
