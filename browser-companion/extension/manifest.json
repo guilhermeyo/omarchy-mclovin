@@ -1,12 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "mclovin — Open Zoom directly",
+  "name": "mclovin",
   "version": "0.1.0",
-  "description": "Send Zoom meeting links clicked on any website directly to mclovin.",
+  "description": "Open links where your mclovin rules say, including the ones you click inside the browser.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5iaM/IiiYJApqL8Fsjc+jUkLdBQZMXn+SLHY6ogQmAIhmYGc2pqDFvEqXITGF+xzntTpAEfjY2Lfc1Ptggqbs41X8r21w3hIalldYVLKm6NUQh1aBBZfw8rTMjDm8mWLfYJunwWHdNPst43zdHS0y6pIc0ru4c7Y9iWoG+AEboCghPHftkbMaSQFsroHZlxYQb8IvqGMunflKpPRG5wyrSd4/LpZm0VpJw5MbwsTLV6TxvQH0UaLGFFH1t8IdXJzwzn2gnYdOJ7bXB7GQaC3JQYkJhe3TBW4wCh55lJvnKV3YtcE36SbHWDedfIAtc5cllUM8Avhp9R/LTJyM1zvJwIDAQAB",
   "minimum_chrome_version": "109",
   "permissions": [
-    "nativeMessaging"
+    "nativeMessaging",
+    "contextMenus"
   ],
   "background": {
     "service_worker": "background.js"
@@ -18,7 +25,7 @@
         "https://*/*"
       ],
       "js": [
-        "zoom-links.js",
+        "rules.js",
         "content.js"
       ],
       "all_frames": true,

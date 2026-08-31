@@ -1,6 +1,16 @@
 (function () {
   "use strict";
 
+  // Rules arrive from the service worker once per page. Until they do, and if
+  // they never do, every click behaves exactly as it did before the extension
+  // existed. Failing open is the whole safety story here: a companion that
+  // cancels a navigation it then cannot complete is worse than no companion.
+  let rules = null;
+
+  chrome.runtime.sendMessage({ type: "rules" })
+    .then((response) => { if (response && Array.isArray(response.rules)) rules = response.rules; })
+    .catch(() => {});
+
   function clickedAnchor(event) {
     const path = typeof event.composedPath === "function" ? event.composedPath() : [];
     for (const node of path) {
@@ -25,7 +35,8 @@
     else window.location.assign(url);
   }
 
-  function interceptZoomClick(event) {
+  function interceptClick(event) {
+    if (!rules || rules.length === 0) return;
     if (!event.isTrusted || event.defaultPrevented) return;
     if (event.type === "click" && event.button !== 0) return;
     if (event.type === "auxclick" && event.button !== 1) return;
@@ -33,19 +44,23 @@
     const anchor = clickedAnchor(event);
     if (!anchor) return;
 
-    const url = McLovinZoom.normalizedMeetingUrl(anchor.href, document.baseURI);
+    const url = McLovinRules.isRouted(rules, anchor.href, document.baseURI);
     if (!url) return;
 
     const newTab = wantsNewTab(event, anchor);
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    // The service worker performs the fallback while the extension is alive.
-    // This catch covers the narrow reload/uninstall race where it is not.
-    chrome.runtime.sendMessage({ type: "openZoomDirectly", url, newTab })
+    chrome.runtime.sendMessage({ type: "openUrl", url, newTab })
+      .then((response) => {
+        // The service worker performs its own fallback and answers ok:false only
+        // when that failed too. Navigating here is the last thing standing
+        // between a cancelled click and a link that went nowhere.
+        if (!response || response.ok !== true) normalBrowserFallback(url, newTab);
+      })
       .catch(() => normalBrowserFallback(url, newTab));
   }
 
-  globalThis.addEventListener("click", interceptZoomClick, true);
-  globalThis.addEventListener("auxclick", interceptZoomClick, true);
+  globalThis.addEventListener("click", interceptClick, true);
+  globalThis.addEventListener("auxclick", interceptClick, true);
 })();

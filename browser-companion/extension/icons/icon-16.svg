@@ -1,0 +1,12 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <mask id="m-cutout">
+      <rect x="8" y="20" width="19" height="24" rx="2" fill="white"/>
+      <path d="M11 24H14L17.5 29L21 24H24V40H20.5V30L17.5 34L14.5 30V40H11V24Z" fill="black"/>
+    </mask>
+  </defs>
+  <rect x="2" y="12" width="60" height="40" rx="6" fill="none" stroke="#F4CF45" stroke-width="4.5"/>
+  <rect x="8" y="20" width="19" height="24" rx="2" fill="#F4CF45" mask="url(#m-cutout)"/>
+  <rect x="33" y="23" width="23" height="5.5" rx="1.5" fill="#F4CF45"/>
+  <rect x="33" y="35.5" width="23" height="5.5" rx="1.5" fill="#F4CF45"/>
+</svg>
