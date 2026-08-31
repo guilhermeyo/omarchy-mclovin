@@ -30,6 +30,7 @@ Item {
   property bool advanced: false
   property string targetKind: "browser"
   property string browserValue: ""
+  property string webappValue: ""
   property string commandText: ""
   property string testUrl: ""
   property bool wantPrivate: false
@@ -123,6 +124,29 @@ Item {
     return out
   }
 
+  // Every installed web app, not just the one that owns the link: the form is
+  // where a rule is written from scratch, and the picker's link is not in hand.
+  readonly property var webappOptions: {
+    revision
+    var apps = (service && service.webapps) || []
+    var out = []
+    for (var i = 0; i < apps.length; i++) {
+      out.push({ value: String(apps[i].id), label: String(apps[i].name) })
+    }
+    return out
+  }
+
+  // A rule can name a web app that has since been uninstalled. Falling back to
+  // the first keeps the dropdown from printing a raw desktop id.
+  function resolveWebappValue(id) {
+    var wanted = String(id || "")
+    var options = root.webappOptions
+    for (var i = 0; i < options.length; i++) {
+      if (options[i].value === wanted) return wanted
+    }
+    return options.length ? options[0].value : ""
+  }
+
   // ------------------------------------------------------------- lifecycle
 
   function load(index, seedUrl) {
@@ -142,11 +166,16 @@ Item {
         root.targetKind = "command"
         root.commandText = existing.command
         root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
+      } else if (existing.webapp) {
+        root.targetKind = "webapp"
+        root.commandText = ""
+        root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
       } else {
         root.targetKind = "browser"
         root.commandText = ""
         root.browserValue = resolveBrowserValue(existing.browser, existing.profile)
       }
+      root.webappValue = resolveWebappValue(existing.webapp)
       root.wantPrivate = existing.private === true
     } else {
       // A new rule seeded from the link in hand: host is the choice people make
@@ -159,6 +188,7 @@ Item {
       var host = seedUrl ? Router.displayHost(Router.parseUrl(seedUrl)) : ""
       termModel.append({ value: host })
       root.browserValue = root.browserOptions.length ? root.browserOptions[0].value : ""
+      root.webappValue = resolveWebappValue("")
     }
 
     if (termModel.count === 0) termModel.append({ value: "" })
@@ -182,6 +212,11 @@ Item {
       if (!cmd) return null
       return Router.makeRule(root.when, t, "", "", cmd)
     }
+    if (root.targetKind === "webapp") {
+      var app = String(root.webappValue).trim()
+      if (!app) return null
+      return Router.makeRule(root.when, t, "", "", "", false, app)
+    }
     var id = unpackBrowser(root.browserValue)
     if (!id) return null
     return Router.makeRule(root.when, t, id, unpackProfile(root.browserValue), "",
@@ -203,6 +238,12 @@ Item {
   readonly property string targetLabel: {
     revision
     if (root.targetKind === "command") return String(root.commandText).trim()
+    if (root.targetKind === "webapp") {
+      for (var w = 0; w < root.webappOptions.length; w++) {
+        if (root.webappOptions[w].value === root.webappValue) return root.webappOptions[w].label
+      }
+      return ""
+    }
     for (var i = 0; i < root.browserOptions.length; i++) {
       if (root.browserOptions[i].value === root.browserValue) return root.browserOptions[i].label
     }
@@ -511,6 +552,7 @@ Item {
           fontFamily: root.fontFamily
           options: [
             { value: "browser", label: "A browser" },
+            { value: "webapp", label: "A web app" },
             { value: "command", label: "A command" }
           ]
           onChanged: function(value) { root.targetKind = value; root.revision++ }
@@ -535,6 +577,30 @@ Item {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
+        }
+
+        Dropdown {
+          Layout.fillWidth: true
+          visible: root.targetKind === "webapp" && root.webappOptions.length > 0
+          showLabel: false
+          options: root.webappOptions
+          value: root.webappValue
+          foreground: root.foreground
+          accent: root.accent
+          fontFamily: root.fontFamily
+          onChanged: function(value) { root.webappValue = value; root.revision++ }
+        }
+
+        Text {
+          Layout.fillWidth: true
+          visible: root.targetKind === "webapp"
+          text: root.webappOptions.length === 0
+            ? "No web apps installed. Omarchy writes one per site under Install → Web app."
+            : "Links land in the window that app already has open, and open one when it has none."
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
         }
 
         Toggle {

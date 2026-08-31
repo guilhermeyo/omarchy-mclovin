@@ -445,11 +445,16 @@ and profile already has an ordinary window, mclovin raises it instead of
 stacking a second one on top. Picking privately always opens: a fresh private
 window is the point of asking.
 
-Windows come from the Wayland foreign-toplevel protocol, not from asking the
-compositor, so this needs no `hyprctl` and works the same wherever the shell
-runs. A `--app=` window reports an id like `brave-web.whatsapp.com__-Default`,
-and that marker is what keeps a webapp from ever counting as the browser being
-open.
+Windows come from the Wayland foreign-toplevel protocol rather than from a
+compositor query, so recognising them needs no `hyprctl`. A `--app=` window
+reports an id like `brave-web.whatsapp.com__-Default`, and that doubled
+underscore is what keeps a web app from ever counting as the browser being open.
+
+Raising one does take `hyprctl`. The protocol's own `activate()` lands while
+the picker is up, because the shell holds the keyboard at that moment, and does
+nothing when a rule fires with no overlay on screen. So both are sent: the
+protocol first, then the dispatcher, in the two dialects a Lua config and a
+classic config speak.
 
 Two limits worth stating plainly, because both fail towards opening a window
 rather than towards the wrong one:
@@ -462,6 +467,29 @@ rather than towards the wrong one:
 - **Firefox does say**, in its title, so its profiles are told apart — and a
   private window is skipped, in any language, by requiring the brand segment to
   be exactly "Mozilla Firefox" rather than matching English wording.
+
+## Sending a link to a web app
+
+A rule can name an Omarchy web app instead of a browser — the third choice under
+**Open it in…** in the rule form. Links it catches land in the window that app
+already has open, and open one when it has none.
+
+This exists for WhatsApp, and for anything else that allows one session at a
+time. WhatsApp Web logs the open window out the moment a second one claims the
+session, so a share link that opened a second window did not merely duplicate
+the app, it broke the app that was already there.
+
+```json
+{ "when": "contains", "terms": ["whatsapp.com", "wa.me"], "webapp": "WhatsApp" }
+```
+
+The web app is matched by site, not by exact URL: the app sits on
+`web.whatsapp.com/` and the share link that wants it is on
+`api.whatsapp.com/send`. A `--app=` window cannot be navigated from outside, so
+the choice is that window or another one, and the open one wins.
+
+Nothing routes to a web app on its own. Without a rule the picker behaves
+exactly as before — web apps are never offered as rows.
 
 ## Notes
 

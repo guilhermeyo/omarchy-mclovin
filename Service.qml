@@ -82,6 +82,36 @@ Item {
     root.browsers = Browsers.sortBrowsers(out)
   }
 
+  // Omarchy's web apps: chromeless `--app=` windows pinned to one site. Kept
+  // apart from `browsers` because a web app is not somewhere to send any link,
+  // only a link to the site it owns.
+  property var webapps: []
+
+  function refreshWebapps() {
+    var values = (DesktopEntries.applications && DesktopEntries.applications.values) || []
+    var out = []
+    for (var i = 0; i < values.length; i++) {
+      var app = Browsers.webappEntry(values[i])
+      if (!app) continue
+      app.host = Router.parseUrl(app.url).domain
+      if (app.host) out.push(app)
+    }
+    root.webapps = Browsers.sortBrowsers(out)
+  }
+
+  function webappById(id) {
+    var wanted = String(id || "")
+    if (!wanted) return null
+    for (var i = 0; i < root.webapps.length; i++) {
+      var app = root.webapps[i]
+      if (String(app.id) === wanted) return app
+      // Rules written by hand may carry the .desktop suffix, or omit it.
+      if (String(app.id) === wanted.replace(/\.desktop$/, "")) return app
+      if (String(app.id) + ".desktop" === wanted) return app
+    }
+    return null
+  }
+
   function browserById(id) {
     var wanted = String(id || "")
     if (!wanted) return null
@@ -102,7 +132,7 @@ Item {
 
   Connections {
     target: DesktopEntries.applications
-    function onValuesChanged() { root.refreshBrowsers() }
+    function onValuesChanged() { root.refreshBrowsers(); root.refreshWebapps() }
   }
 
   // -------------------------------------------------------------- profiles
@@ -310,10 +340,20 @@ Item {
     return true
   }
 
-  // A target is a rule-shaped object: {command}, or {browser, profile, private}.
+  // A target is a rule-shaped object: {webapp}, {command}, or
+  // {browser, profile, private}.
   function launch(target, url) {
     root.lastError = ""
     if (!target) return false
+
+    if (target.webapp) {
+      var app = webappById(target.webapp)
+      if (!app) {
+        root.lastError = "No web app matches “" + target.webapp + "”"
+        return false
+      }
+      return launchWebapp(app, url)
+    }
 
     if (target.command) {
       var cmdArgv = Browsers.expandCommand(target.command, url)
@@ -368,6 +408,58 @@ Item {
     return true
   }
 
+  // A web app target lands in the window already showing that site, or opens
+  // one.
+  //
+  // Focusing is the point, not an optimisation. An `--app=` window is a browser
+  // session, and a site that allows only one — WhatsApp Web is the one everybody
+  // has — logs the open window out the moment a second claims it. So a link that
+  // opens a second window does not merely duplicate the app, it breaks the app
+  // that was already there.
+  //
+  // Matched on the site rather than the exact URL, because those two are never
+  // the same: the app sits on web.whatsapp.com/ and the link that wants it is a
+  // share URL on api.whatsapp.com/send. A `--app=` window cannot be navigated
+  // from outside anyway, so the choice is that window or another one.
+  function launchWebapp(app, url) {
+    var existing = Browsers.findAppToplevel(ToplevelManager.toplevels.values,
+                                            Browsers.siteKey(app.host))
+    if (existing) {
+      root.lastLaunch = { webapp: app.id, focused: String(existing.title || "") }
+      focusDelay.toplevel = existing
+      focusDelay.fallbackArgv = []
+      focusDelay.restart()
+      return true
+    }
+
+    var entry = browserById(root.config.webapp) || browserById(root.fallbackBrowser)
+      || (root.browsers.length ? root.browsers[0] : null)
+    if (!entry) {
+      root.lastError = "No browser is installed to open “" + app.name + "”"
+      return false
+    }
+
+    // --app= is a Chromium flag. Gecko has no equivalent, and handing it one
+    // opens nothing at all rather than an ordinary window.
+    if (!Browsers.isChromiumFamily(entry.id)) {
+      root.lastError = entry.name + " has no --app window. Set “webapp” in "
+        + "config.json to a Chromium-family browser."
+      return false
+    }
+
+    // The link, not the app's own URL: a share link carries the chat it is
+    // about in its query, and dropping it opens the app on nothing.
+    var argv = Browsers.webappArgs(entry.id, entry.execString, String(url || app.url), "")
+    if (!argv.length) {
+      root.lastError = entry.name + " has no usable Exec line in its desktop entry"
+      return false
+    }
+
+    root.lastLaunch = { webapp: app.id, browser: entry.id, argv: argv }
+    Quickshell.execDetached(argv)
+    return true
+  }
+
   // Deliberately late: the overlay is a layer surface holding exclusive
   // keyboard focus and is dismissed on the same tick this decision is made.
   // Raising the browser before that surface is gone gets undone when the
@@ -382,10 +474,47 @@ Item {
     property var fallbackArgv: []
     interval: 220
     onTriggered: {
-      if (toplevel) toplevel.activate()
+      if (toplevel) root.raiseToplevel(toplevel)
       else if (fallbackArgv.length) Quickshell.execDetached(fallbackArgv)
       toplevel = null
     }
+  }
+
+  // Raising someone else's window is the one thing the toplevel protocol turns
+  // out not to answer on its own. `activate()` lands while the picker is up,
+  // because the shell holds the keyboard at that moment, and does nothing at
+  // all when a rule fires with no overlay on screen — measured on Hyprland
+  // 0.56.2 with misc:focus_on_activate already true: the timer runs, the
+  // handle is the right window, and the window stays exactly where it was.
+  //
+  // So the protocol is still asked first — synchronous, no dialect, and it is
+  // what works in the picker — and the dispatcher follows for the case it did
+  // not take. Focusing a window that activate() already focused is a no-op.
+  function raiseToplevel(top) {
+    if (!top) return
+    top.activate()
+
+    var cls = String(top.appId || "")
+    if (!cls) return
+    // A Hyprland window selector is a regex, so the class has to survive being
+    // read as one: `brave-web.whatsapp.com__-Default` is full of dots.
+    focusDispatch.selector = "class:^(" + cls.replace(/[\\^$.|?*+()\[\]{}]/g, "\\$&") + ")$"
+    focusDispatch.running = true
+  }
+
+  // Hyprland's Lua config and its classic config take different dispatcher
+  // dialects, and the wrong one is a parse error rather than a focus — which is
+  // why 896d15c dropped hyprctl in the first place. Both are sent, Lua first,
+  // the way omarchy-launch-or-focus sends them; the wrong dialect exits non-zero
+  // without touching a window, so `||` picks the one this machine speaks.
+  Process {
+    id: focusDispatch
+    property string selector: ""
+    command: ["sh", "-c",
+      "hyprctl dispatch "
+      + Util.shellQuote("hl.dsp.focus({ window = \"" + selector.replace(/\\/g, "\\\\") + "\" })")
+      + " >/dev/null 2>&1 || hyprctl dispatch focuswindow "
+      + Util.shellQuote(selector) + " >/dev/null 2>&1"]
   }
 
   function supportsPrivate(browserId) {
@@ -399,6 +528,10 @@ Item {
   function targetName(target) {
     if (!target) return ""
     if (target.command) return String(target.command).split(" ")[0]
+    if (target.webapp) {
+      var app = webappById(target.webapp)
+      return (app ? app.name : String(target.webapp).replace(/\.desktop$/, "")) + " · web app"
+    }
     var name = browserName(target.browser)
     if (target.profile) name += " · " + target.profile
     if (target.private) name += " · private"
@@ -619,6 +752,7 @@ Item {
         desktopId: root.desktopId,
         script: root.handlerScript,
         browsers: root.browsers.length,
+        webapps: root.webapps.length,
         rules: root.rules.length,
         fallback: root.fallbackBrowser,
         today: root.stats.count,
@@ -635,6 +769,7 @@ Item {
 
     function refresh(): string {
       root.refreshBrowsers()
+      root.refreshWebapps()
       root.refreshHandler()
       root.reloadFirefoxProfiles()
       return "ok"
@@ -656,5 +791,5 @@ Item {
     }
   }
 
-  Component.onCompleted: refreshBrowsers()
+  Component.onCompleted: { refreshBrowsers(); refreshWebapps() }
 }

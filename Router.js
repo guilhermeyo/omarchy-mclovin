@@ -224,6 +224,7 @@ function ruleSummary(rule) {
 function ruleTargetLabel(rule) {
   if (!rule) return ""
   if (rule.command) return rule.command
+  if (rule.webapp) return String(rule.webapp).replace(/\.desktop$/, "")
   var target = String(rule.browser || "")
   return rule.profile ? target + " · " + rule.profile : target
 }
@@ -387,10 +388,10 @@ function normalizeConfig(raw) {
   }
 }
 
-// A rule needs somewhere to send the URL — either a desktop entry (optionally
-// with a browser profile) or a raw command line containing {url}. Anything
-// without a matcher or without a target is dropped rather than kept as a rule
-// that can never fire.
+// A rule needs somewhere to send the URL — a desktop entry (optionally with a
+// browser profile), an Omarchy web app, or a raw command line containing {url}.
+// Anything without a matcher or without a target is dropped rather than kept as
+// a rule that can never fire.
 function normalizeRule(raw) {
   if (!raw || typeof raw !== "object") return null
 
@@ -413,9 +414,15 @@ function normalizeRule(raw) {
   var out = { when: when, terms: terms }
 
   var command = String(raw.command || "").trim()
+  var webapp = String(raw.webapp || "").trim()
   var browser = String(raw.browser || "").trim()
   if (command) {
     out.command = command
+  } else if (webapp) {
+    // A web app carries neither of the two modifiers a browser target takes: it
+    // owns one window on one site, so there is no profile to pin, and no
+    // Chromium `--app=` window has ever been an incognito one.
+    out.webapp = webapp
   } else if (browser) {
     out.browser = browser
     var profile = String(raw.profile || "").trim()
@@ -431,13 +438,14 @@ function normalizeRule(raw) {
   return out
 }
 
-function makeRule(when, terms, browser, profile, command, wantPrivate) {
+function makeRule(when, terms, browser, profile, command, wantPrivate, webapp) {
   return normalizeRule({
     when: when,
     terms: terms,
     browser: browser,
     profile: profile,
     command: command,
+    webapp: webapp,
     private: wantPrivate === true
   })
 }
@@ -445,10 +453,10 @@ function makeRule(when, terms, browser, profile, command, wantPrivate) {
 // Replacing an existing rule for the same matcher rather than appending keeps
 // "remember this" idempotent — picking a different browser for a host you
 // already have a rule for updates it instead of adding a shadowed duplicate.
-function upsertRule(config, when, term, browser, profile, wantPrivate) {
+function upsertRule(config, when, term, browser, profile, wantPrivate, webapp) {
   var next = normalizeConfig(config)
   var candidate = makeRule(isWhen(when) ? when : WHEN_HOST, [term],
-                           browser, profile, "", wantPrivate)
+                           browser, profile, "", wantPrivate, webapp)
   if (!candidate) return next
   return replaceOrAppend(next, candidate)
 }
