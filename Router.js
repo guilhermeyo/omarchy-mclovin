@@ -6,10 +6,60 @@
 
 var CONFIG_VERSION = 1
 
-// Built-in destinations do more than choose a browser. Keeping their stable
-// ids in the rule instead of writing an installation-specific command path
-// makes the config portable between machines and plugin locations.
+// A destination that is neither a browser nor a command: the desktop
+// application that owns the site a link is on.
+//
+// One action, not one per site. "Zoom directly" sat in a list of destination
+// KINDS while naming the site the rule happens to be about -- a category error
+// that only gets worse as sites are added, since five of six buttons are then
+// wrong for any given rule.
+var ACTION_NATIVE = "native"
+// The name this action carried when Zoom was the only site it knew. Read and
+// migrated so a config written then keeps working.
 var ACTION_ZOOM = "zoom"
+
+// The sites whose links a desktop application can take, and the URI scheme that
+// application claims.
+//
+// A table because there is no rule to derive:
+//
+//   zoom.us/j/1842            zoommtg://zoom.us/join?action=join&confno=1842
+//   open.spotify.com/track/X  spotify:track:X
+//
+// Nothing turns one of those into the other. Adding a site is an entry here and
+// its conversion in mclovin-open, which is where the URL is validated a second
+// time before it becomes a URI -- and test/tst_router.qml pins the ids in this
+// table to the ones that file knows, so the two cannot drift apart quietly.
+function nativeApps() {
+  return [
+    {
+      id: "zoom",
+      label: "Zoom",
+      scheme: "zoommtg",
+      // Numbered meetings only. A vanity room and an account page are ordinary
+      // pages and keep ordinary browser behaviour.
+      pattern: "^https://([a-z0-9-]+\\.)*zoom\\.us/(j|w|wc/join)/[0-9-]+(?:[/?#]|$)"
+    }
+  ]
+}
+
+// The entry whose site a link is on, or null. First match wins; the patterns
+// name one site each, so there is nothing to order.
+function nativeAppFor(url) {
+  var target = String(url || "")
+  var apps = nativeApps()
+  for (var i = 0; i < apps.length; i++) {
+    try {
+      if (new RegExp(apps[i].pattern, "i").test(target)) return apps[i]
+    } catch (e) {}
+  }
+  return null
+}
+
+function isNativeAction(action) {
+  var a = String(action || "")
+  return a === ACTION_NATIVE || a === ACTION_ZOOM
+}
 
 // Presets are editable starting points, not a second kind of saved rule. The
 // stable ids live here so the form can render a library without growing one
@@ -240,7 +290,7 @@ function ruleSummary(rule) {
 
 function ruleTargetLabel(rule) {
   if (!rule) return ""
-  if (rule.action === ACTION_ZOOM) return "Zoom directly"
+  if (isNativeAction(rule.action)) return "Its native app"
   if (rule.command) return rule.command
   if (rule.webapp) return String(rule.webapp).replace(/\.desktop$/, "")
   var target = String(rule.browser || "")
@@ -375,6 +425,21 @@ function firstMatch(rules, parsed) {
   return null
 }
 
+// Scheme -> absolute path of a desktop entry. Anything that is not a bare
+// scheme name mapped to an absolute path is dropped rather than kept as a
+// setting that can never resolve.
+function normalizeHandlers(raw) {
+  var out = {}
+  if (!raw || typeof raw !== "object") return out
+  for (var scheme in raw) {
+    if (!/^[a-z][a-z0-9+.-]*$/i.test(scheme)) continue
+    var path = String(raw[scheme] || "").trim()
+    if (path.charAt(0) !== "/") continue
+    out[scheme.toLowerCase()] = path
+  }
+  return out
+}
+
 function normalizeConfig(raw) {
   var parsed = raw
   if (typeof raw === "string") {
@@ -402,6 +467,15 @@ function normalizeConfig(raw) {
     // Which browser gets `--app=` windows. Never the picker: a webapp launcher
     // asking which browser to use every time would be unusable.
     webapp: String(parsed.webapp || "").trim(),
+    // Which application owns a scheme, keyed by scheme and valued by the
+    // ABSOLUTE PATH of a desktop entry.
+    //
+    // By path because the id is not unique. Two files named Zoom.desktop --
+    // Omarchy's web app handler in ~/.local/share and the native client's in
+    // /usr/share -- both claim zoommtg://, and `xdg-mime query default` answers
+    // "Zoom.desktop" for both. XDG resolves the first, silently, forever. This
+    // key is how someone says which one they meant.
+    handlers: normalizeHandlers(parsed.handlers),
     rules: clean
   }
 }
@@ -435,8 +509,10 @@ function normalizeRule(raw) {
   var command = String(raw.command || "").trim()
   var webapp = String(raw.webapp || "").trim()
   var browser = String(raw.browser || "").trim()
-  if (action === ACTION_ZOOM) {
-    out.action = action
+  if (isNativeAction(action)) {
+    // Migrated on read: a rule saved when this was called "zoom" keeps working
+    // and is written back under the name that does not name a site.
+    out.action = ACTION_NATIVE
   } else if (command) {
     out.command = command
   } else if (webapp) {
@@ -482,7 +558,7 @@ function makeRule(when, terms, browser, profile, command, wantPrivate, target) {
 // as an advanced regular expression. It is still an ordinary editable rule in
 // config; the preset only supplies the safe defaults.
 function zoomPresetRule() {
-  return makeRule(WHEN_REGEX, [ZOOM_MEETING_PATTERN], "", "", "", false, { action: ACTION_ZOOM })
+  return makeRule(WHEN_REGEX, [ZOOM_MEETING_PATTERN], "", "", "", false, { action: ACTION_NATIVE })
 }
 
 // Keep the preset catalogue as data. The form only knows how to apply the rule
@@ -492,8 +568,8 @@ function zoomPresetRule() {
 function rulePresets() {
   return [{
     id: PRESET_ZOOM_MEETING,
-    label: "Zoom meeting → Zoom directly",
-    description: "Numbered Zoom meeting links, opened with the Zoom protocol.",
+    label: "Zoom meeting → its native app",
+    description: "Numbered Zoom meeting links, handed to the application that owns them.",
     category: "Meetings",
     testUrl: "https://us02web.zoom.us/j/123456789?pwd=example",
     rule: zoomPresetRule()

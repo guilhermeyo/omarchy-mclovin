@@ -507,6 +507,56 @@ function webappArgs(browserId, execString, url, profileDirectory) {
   return [argv[0]].concat(flags, argv.slice(1))
 }
 
+// --------------------------------------------------------------- handlers
+//
+// Which applications claim a URI scheme, read off disk rather than from
+// DesktopEntries.
+//
+// DesktopEntries indexes by desktop id, and an id is not unique across the data
+// directories. Two files named Zoom.desktop -- Omarchy's web app handler in
+// ~/.local/share and the native client's in /usr/share -- both claim
+// zoommtg://, and the plugin could not see that at all: it was handed one entry
+// and never told there was a second. `xdg-mime query default` has the same
+// blindness, answering "Zoom.desktop" for either.
+//
+// Input is one "<path>\t<name>\t<exec>" line per entry, which is what the
+// shell-out in Service.qml prints. Split on the first separator each time: a
+// Name may contain anything, a path will not.
+function parseHandlers(stdout) {
+  var lines = String(stdout || "").split("\n")
+  var out = []
+  var seen = {}
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (!line) continue
+
+    var a = line.indexOf("\t")
+    if (a === -1) continue
+    var path = line.slice(0, a).trim()
+    var rest = line.slice(a + 1)
+
+    var b = rest.indexOf("\t")
+    var name = (b === -1 ? rest : rest.slice(0, b)).trim()
+    var exec = b === -1 ? "" : rest.slice(b + 1).trim()
+
+    if (!path || path.charAt(0) !== "/" || seen[path]) continue
+    seen[path] = true
+
+    out.push({
+      path: path,
+      name: name || path.split("/").pop().replace(/\.desktop$/, ""),
+      exec: exec,
+      // The directory is what tells two identically named entries apart, and it
+      // is the only thing a person can use to choose between them.
+      where: path.slice(0, path.lastIndexOf("/"))
+    })
+  }
+
+  out.sort(function(a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) })
+  return out
+}
+
 // ------------------------------------------------------------------- browsers
 
 // DesktopEntry.categories is a QStringList, which reaches JS as an array-LIKE

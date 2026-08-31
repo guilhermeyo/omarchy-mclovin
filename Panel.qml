@@ -412,7 +412,7 @@ Panel {
 
       // A browser-internal click never reaches the system HTTP handler. Keep
       // this offer out of everyone else's way: it appears only after someone
-      // has deliberately created a Zoom-direct rule.
+      // has deliberately created a rule whose destination leaves the browser.
       PanelSeparator {
         foreground: root.foreground
         visible: root.hasCompanionRule && root.browserCompanionInstallable

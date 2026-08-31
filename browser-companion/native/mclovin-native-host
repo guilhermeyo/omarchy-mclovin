@@ -38,7 +38,11 @@ def state_path():
 
 # Router.WHEN_* -- the four matcher kinds, and the only action it defines.
 WHEN_KINDS = ("startsWith", "contains", "host", "regex")
-ACTION_ZOOM = "zoom"
+# Router.js: the destination that means "the desktop application that owns this
+# site". `zoom` is what it was called when Zoom was the only site it knew, and
+# Router still reads it, so both are known here -- a rule Router routes and this
+# file skips is a rule the panel says it is watching and the extension is not.
+ACTIONS = ("native", "zoom")
 
 
 def term_list(value):
@@ -103,7 +107,7 @@ def interceptable_rules():
     for rule in (config.get("rules") or [])[:MAX_RULES]:
         if not isinstance(rule, dict):
             continue
-        if str(rule.get("action") or "").strip() not in ("", ACTION_ZOOM):
+        if str(rule.get("action") or "").strip() not in ("",) + ACTIONS:
             # Router drops a rule whose action it does not know, so watching for
             # one would cancel clicks that then reach a rule that does not exist.
             continue

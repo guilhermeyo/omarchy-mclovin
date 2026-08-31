@@ -170,6 +170,86 @@ Item {
     root.webapps = Browsers.sortBrowsers(out)
   }
 
+  // Applications claiming a URI scheme, by absolute path, read off disk.
+  //
+  // DesktopEntries cannot answer this: it indexes by desktop id, and two files
+  // can share one. Both Zoom.desktop entries on an Omarchy with the Zoom web
+  // app installed claim zoommtg://, and the plugin was handed one of them with
+  // no indication the other existed.
+  property var schemeHandlers: ({})
+  property string pendingHandlerScheme: ""
+
+  function handlersFor(scheme) { return root.schemeHandlers[String(scheme || "")] || [] }
+
+  function chosenHandler(scheme) {
+    var key = String(scheme || "")
+    var stored = (root.config.handlers || {})[key] || ""
+    if (!stored) return ""
+    // A stored choice that no longer exists is worse than none: it would send
+    // the link to a file that is gone. Fall back to asking again.
+    var list = handlersFor(key)
+    for (var i = 0; i < list.length; i++) if (list[i].path === stored) return stored
+    return ""
+  }
+
+  function rememberHandler(scheme, path) {
+    var next = Router.normalizeConfig(root.config)
+    var handlers = ({})
+    for (var k in (next.handlers || {})) handlers[k] = next.handlers[k]
+    handlers[String(scheme || "")] = String(path || "")
+    next.handlers = handlers
+    setConfig(next)
+  }
+
+  // Every scheme the native-app table names, so a rule can ask about any of
+  // them without a round trip at click time.
+  function scanNativeHandlers() {
+    var apps = Router.nativeApps()
+    for (var i = 0; i < apps.length; i++) scanHandlers(apps[i].scheme)
+  }
+
+  function scanHandlers(scheme) {
+    if (!scheme || handlerScan.running) return
+    root.pendingHandlerScheme = String(scheme)
+    handlerScan.scheme = String(scheme)
+    handlerScan.running = true
+  }
+
+  // One `grep` over the four directories a launcher searches, printing
+  // path, Name and Exec. Shelling out for the same reason the Firefox profile
+  // reader does: this is not a hot path, and QML has no directory listing.
+  Process {
+    id: handlerScan
+    property string scheme: ""
+    running: false
+    command: ["sh", "-c",
+      'scheme=$1\n'
+      + 'for dir in "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \\\n'
+      + '           /usr/local/share/applications /usr/share/applications \\\n'
+      + '           /var/lib/flatpak/exports/share/applications; do\n'
+      + '  [ -d "$dir" ] || continue\n'
+      + '  for f in "$dir"/*.desktop; do\n'
+      + '    [ -f "$f" ] || continue\n'
+      + '    grep -q "^MimeType=.*x-scheme-handler/$scheme;" "$f" || continue\n'
+      + '    name=$(sed -n "s/^Name=//p" "$f" | head -n1)\n'
+      + '    exec_line=$(sed -n "s/^Exec=//p" "$f" | head -n1)\n'
+      + '    printf "%s\\t%s\\t%s\\n" "$f" "$name" "$exec_line"\n'
+      + '  done\n'
+      + 'done\n',
+      "sh", scheme]
+
+    stdout: StdioCollector {
+      id: handlerOut
+      waitForEnd: true
+      onStreamFinished: {
+        var next = ({})
+        for (var k in root.schemeHandlers) next[k] = root.schemeHandlers[k]
+        next[handlerScan.scheme] = Browsers.parseHandlers(text)
+        root.schemeHandlers = next
+      }
+    }
+  }
+
   function webappById(id) {
     var wanted = String(id || "")
     if (!wanted) return null
@@ -360,6 +440,22 @@ Item {
     var parsed = Router.parseUrl(target)
     var rule = Router.firstMatch(root.rules, parsed)
 
+    // More than one application claims the scheme this rule hands its URL to,
+    // and nobody has said which. Handing it to XDG picks the first by directory
+    // precedence, silently and forever -- which is how a machine with Omarchy's
+    // Zoom web app installed sends every meeting link back to a browser while
+    // the native client sits there.
+    //
+    // Asked here rather than inside launch(), because launch() answering true
+    // for "a question was posed" would have route() record a link that has not
+    // opened yet and answer "routed" to a caller that is still waiting.
+    var nativeApp = (rule && Router.isNativeAction(rule.action)) ? Router.nativeAppFor(target) : null
+    var scheme = nativeApp ? nativeApp.scheme : ""
+    if (scheme && !chosenHandler(scheme) && handlersFor(scheme).length > 1) {
+      root.lastError = ""
+      return askHandler(scheme, target, rule) ? "asked" : "failed"
+    }
+
     var reason = ""
     if (rule) {
       if (launch(rule, target)) {
@@ -380,6 +476,33 @@ Item {
     }
 
     return ask(target, wantPrivate === true, reason) ? "asked" : "failed"
+  }
+
+  // The picker, listing the applications that claim a scheme rather than the
+  // installed browsers. Same overlay, same Always checkbox; what changes is what
+  // the rows are and where the answer is written.
+  function askHandler(scheme, url, rule) {
+    if (!root.shell || typeof root.shell.summon !== "function") return false
+    return root.shell.summon(root.pluginId, JSON.stringify({
+      mode: "handler",
+      scheme: String(scheme || ""),
+      url: String(url || ""),
+      action: String((rule && rule.action) || "")
+    })) === true
+  }
+
+  // Called by the picker once an application has been chosen for a scheme.
+  function chooseHandler(scheme, path, url, remember) {
+    var app = Router.nativeAppFor(url)
+    if (!app) return false
+    if (remember) rememberHandler(scheme, path)
+    var argv = [root.handlerScript, "--native=" + app.id, "--handler=" + String(path || ""),
+                String(url || "")]
+    root.lastLaunch = { action: Router.ACTION_NATIVE, app: app.id,
+                        handler: String(path || ""), argv: argv }
+    Quickshell.execDetached(argv)
+    record("Its native app", "", url)
+    return true
   }
 
   // Opens the picker overlay with the URL in flight. The overlay is a separate
@@ -425,10 +548,21 @@ Item {
     root.lastError = ""
     if (!target) return false
 
-    if (target.action === Router.ACTION_ZOOM) {
-      var zoomArgv = [root.handlerScript, "--zoom-direct", String(url || "")]
-      root.lastLaunch = { action: target.action, argv: zoomArgv }
-      Quickshell.execDetached(zoomArgv)
+    if (Router.isNativeAction(target.action)) {
+      var app = Router.nativeAppFor(url)
+      if (!app) {
+        // The rule says "its native app" and this link has none. Saying so beats
+        // handing the browser a link the rule meant to keep out of it without a
+        // word, and route() falls through to the fallback or the picker.
+        root.lastError = "No native application is known for links like " + String(url || "")
+        return false
+      }
+      var chosen = chosenHandler(app.scheme)
+      var argv = [root.handlerScript, "--native=" + app.id]
+      if (chosen) argv.push("--handler=" + chosen)
+      argv.push(String(url || ""))
+      root.lastLaunch = { action: Router.ACTION_NATIVE, app: app.id, handler: chosen, argv: argv }
+      Quickshell.execDetached(argv)
       return true
     }
 
@@ -628,7 +762,7 @@ Item {
   // so the rule rows keep their two-line shape.
   function targetName(target) {
     if (!target) return ""
-    if (target.action === Router.ACTION_ZOOM) return "Zoom directly"
+    if (Router.isNativeAction(target.action)) return "Its native app"
     if (target.command) return String(target.command).split(" ")[0]
     if (target.webapp) {
       var app = webappById(target.webapp)
@@ -754,6 +888,10 @@ Item {
       configFile.reload()
       statsFile.reload()
       root.refreshHandler()
+      // Here rather than in Component.onCompleted: this is the point the rest
+      // of the startup already treats as "the environment is ready", and a
+      // Process started before it does not run.
+      root.scanNativeHandlers()
     }
   }
 
@@ -892,6 +1030,22 @@ Item {
         script: root.handlerScript,
         browsers: root.browsers.length,
         webapps: root.webapps.length,
+        // Both reported because this is what someone debugging "my Zoom link
+        // went to a browser" needs: how many applications claim the scheme, and
+        // which one was chosen.
+        // What someone debugging "my link went to a browser" needs: for each
+        // site with a native application, how many things claim its scheme and
+        // which one was chosen.
+        nativeApps: (function() {
+          var out = {}
+          var apps = Router.nativeApps()
+          for (var i = 0; i < apps.length; i++) {
+            out[apps[i].id] = { scheme: apps[i].scheme,
+                                claimedBy: handlersFor(apps[i].scheme).length,
+                                chosen: chosenHandler(apps[i].scheme) }
+          }
+          return out
+        })(),
         hasCompanionRule: root.hasCompanionRule,
         rules: root.rules.length,
         fallback: root.fallbackBrowser,
@@ -911,6 +1065,7 @@ Item {
     function refresh(): string {
       root.refreshBrowsers()
       root.refreshWebapps()
+      root.scanNativeHandlers()
       root.refreshHandler()
       root.reloadFirefoxProfiles()
       root.refreshBrowserCompanion()

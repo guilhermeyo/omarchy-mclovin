@@ -39,6 +39,7 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = {} }
 
     root.mode = String(payload.mode || "") === "editor" ? "editor" : "picker"
+    root.handlerScheme = String(payload.mode || "") === "handler" ? String(payload.scheme || "") : ""
     root.url = String(payload.url || "")
     root.ruleIndex = payload.ruleIndex === undefined ? -1 : Number(payload.ruleIndex)
     root.opened = true
@@ -49,10 +50,12 @@ Item {
       form.load(root.ruleIndex, root.url)
       Qt.callLater(function() { form.takeFocus() })
     } else {
-      picker.reset(root.url, payload.private === true, payload.reason)
+      picker.reset(root.url, payload.private === true, payload.reason, root.handlerScheme)
       Qt.callLater(function() { picker.takeFocus() })
     }
   }
+
+  property string handlerScheme: ""
 
   function close() { root.opened = false }
 
@@ -126,6 +129,19 @@ Item {
 
         service: root.service
         onCancelled: root.dismiss()
+        // Choosing an application for a scheme writes somewhere different than
+        // choosing a browser for a link, so it answers on its own signal rather
+        // than threading a mode flag through the other one.
+        onHandlerChosen: function(scheme, path, remember) {
+          var ok = root.service
+            ? root.service.chooseHandler(scheme, path, picker.url, remember)
+            : false
+          if (ok) root.dismiss()
+          else picker.errorText = (root.service && root.service.lastError)
+            ? root.service.lastError
+            : "Could not open that application"
+        }
+
         onChosen: function(browserId, profile, remember, wantPrivate) {
           // The picker owns what the rule matches; this only hands it over.
           var rule = remember

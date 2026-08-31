@@ -76,12 +76,31 @@ Item {
   property string errorText: ""
 
   signal chosen(string browserId, string profile, bool remember, bool wantPrivate)
+  signal handlerChosen(string scheme, string path, bool remember)
   signal cancelled()
+
+  // Non-empty when the picker is choosing which application owns a URI scheme
+  // rather than which browser opens a link. The rows, the header and what
+  // Always writes all follow from it; everything else is the same screen.
+  property string handlerScheme: ""
+  readonly property bool choosingHandler: root.handlerScheme !== ""
+  // service.schemeHandlers is named here, not only reached through handlersFor().
+  // A binding re-evaluates on the properties it actually touched, and a function
+  // call touches none -- so a scan finishing after this screen opened would have
+  // left it listing nothing, with no way to tell that from "no application
+  // claims this".
+  readonly property var handlerRows: {
+    if (!root.choosingHandler || !service) return []
+    var all = service.schemeHandlers
+    return (all && all[root.handlerScheme]) || []
+  }
 
   readonly property var parsed: Router.parseUrl(root.url)
   readonly property string host: Router.displayHost(root.parsed)
   readonly property var allRows: (service && service.pickerEntries) || []
-  readonly property var rows: Browsers.filterPickerEntries(root.allRows, root.filterText)
+  readonly property var rows: root.choosingHandler
+    ? root.handlerRows
+    : Browsers.filterPickerEntries(root.allRows, root.filterText)
 
   readonly property color foreground: Color.menu.text
   readonly property color selectedBackground: Color.menu.selectedBackground
@@ -135,12 +154,16 @@ Item {
 
   // The sentence on the remember line: exactly the rule that will exist.
   readonly property string rememberSummary: {
+    if (root.choosingHandler)
+      return (root.selectedRow ? String(root.selectedRow.name) : "this application")
+        + " · every " + root.handlerScheme + ":// link"
     var where = root.selectedLabel || "this browser"
     if (root.wantPrivate && root.canGoPrivate) where += " · private"
     return where + " · " + whenWord(root.rememberWhen)
   }
 
-  function reset(nextUrl, startPrivate, reason) {
+  function reset(nextUrl, startPrivate, reason, scheme) {
+    root.handlerScheme = String(scheme || "")
     root.url = String(nextUrl || "")
     root.filterText = ""
     root.selectedIndex = 0
@@ -180,6 +203,11 @@ Item {
   function activate(index, forcePrivate) {
     var row = root.rows[index]
     if (!row) return
+
+    if (root.choosingHandler) {
+      root.handlerChosen(root.handlerScheme, String(row.path || ""), root.remember)
+      return
+    }
     var goPrivate = (forcePrivate === true || root.wantPrivate)
       && (service ? service.supportsPrivate(String(row.browserId)) : false)
     root.chosen(String(row.browserId), String(row.profile || ""),
@@ -224,7 +252,8 @@ Item {
       } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
         // Shift opens this one privately without arming the toggle, so the
         // fast path cannot leave state behind for the next link.
-        root.activate(root.selectedIndex, (event.modifiers & Qt.ShiftModifier) !== 0)
+        root.activate(root.selectedIndex,
+                      !root.choosingHandler && (event.modifiers & Qt.ShiftModifier) !== 0)
         event.accepted = true
       } else if (Util.editsFilter(event, root.filterText)) {
         root.setFilter(Util.editedFilter(event, root.filterText))
@@ -259,7 +288,9 @@ Item {
 
         Text {
           Layout.fillWidth: true
-          text: root.host || "Open a browser"
+          text: root.choosingHandler
+      ? (root.handlerScheme + ":// links")
+      : (root.host || "Open a browser")
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.title
@@ -322,7 +353,12 @@ Item {
           required property int index
 
           readonly property bool selected: index === root.selectedIndex
-          readonly property string profile: String(modelData.profile || "")
+          // For a handler row the second line is the directory the entry lives
+          // in, because two applications can share a name and an id and the
+          // directory is the only thing that tells them apart.
+          readonly property string profile: root.choosingHandler
+            ? String(modelData.where || "")
+            : String(modelData.profile || "")
 
           width: list.width
           height: root.rowHeight
@@ -353,7 +389,7 @@ Item {
 
               Text {
                 width: parent.width
-                text: String(row.modelData.name)
+                text: String(row.modelData.name || "")
                 color: row.selected ? root.selectedText : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -405,9 +441,11 @@ Item {
     }
 
     // --------------------------------------------------------------- private
+    // An application either has a private mode or does not, and neither answer
+    // belongs in a question about which application owns a scheme.
     CheckRow {
       Layout.fillWidth: true
-      visible: root.url !== ""
+      visible: root.url !== "" && !root.choosingHandler
       checked: root.wantPrivate
       enabled: root.canGoPrivate
       opacity: root.canGoPrivate ? 1 : 0.5
@@ -493,9 +531,11 @@ Item {
       Layout.fillWidth: true
       text: root.errorText !== ""
         ? root.errorText
-        : (root.url
-            ? "Enter open  ·  Shift+Enter private  ·  Ctrl+R always  ·  Esc cancel"
-            : "Enter open  ·  Esc cancel")
+        : (root.choosingHandler
+            ? "Enter open  ·  Ctrl+R always  ·  Esc cancel"
+            : (root.url
+                ? "Enter open  ·  Shift+Enter private  ·  Ctrl+R always  ·  Esc cancel"
+                : "Enter open  ·  Esc cancel"))
       color: root.errorText !== "" ? root.selectedText : root.faint
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
