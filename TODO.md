@@ -36,3 +36,11 @@ has been able to place, and it is a tool rather than this plugin.
       upstream touches that file (nine times in the last twelve months). Worth proposing
       upstream: honour an env var or a config key for the web app browser, so no handler
       outside the whitelist has to patch the tree at all.
+
+- [ ] Chromium 146+ hands a forwarded URL to the profile's most recently activated window
+      of any type and opens a new window when it is not an ordinary one (CL 7279203,
+      crbug 431671320; `GetExistingBrowserForOpenBehavior` in
+      startup_browser_creator_impl.cc). Under Wayland the workspace-aware branch is dead
+      because `GetCurrentWorkspace()` is unimplemented. `Browsers.linkLanding` and
+      `mclovin-raise` route around it. Worth reporting upstream; when the M145
+      `FindTabbedBrowser` semantics return, the raise becomes a no-op and can go.
