@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import qs.Commons
 import "Router.js" as Router
 import "Browsers.js" as Browsers
@@ -52,6 +53,11 @@ Item {
   readonly property string iconPath: Qt.resolvedUrl("mclovin.svg").toString().replace("file://", "")
   readonly property string companionManager: Qt.resolvedUrl("browser-companion/native/manage").toString().replace("file://", "")
   readonly property string companionExtensionPath: Qt.resolvedUrl("browser-companion/extension").toString().replace("file://", "")
+
+  // Focuses a window and then execs a browser, in that order, in one process.
+  // Run through `sh` rather than directly, so a checkout that dropped the exec
+  // bit costs nothing: a raise that could not start would take the link with it.
+  readonly property string raiseScript: Qt.resolvedUrl("mclovin-raise").toString().replace("file://", "")
 
   // ------------------------------------------------------------------ state
 
@@ -424,6 +430,48 @@ Item {
     }
   }
 
+  // -------------------------------------------------------------- windows
+
+  // The compositor's activation history for ordinary browser windows, most
+  // recent first -- the mirror of Chromium's own browsers_activation_order_,
+  // restricted to what the foreign-toplevel protocol lets the shell see.
+  //
+  // Chromium 146+ hands a forwarded URL to the profile's most recently activated
+  // window of any type and opens a fresh window when that one is an --app= one
+  // (Browsers.linkLanding has the whole story). The protocol keeps no history,
+  // only a flag on the window active right now, so history is recorded here
+  // from activeToplevel as it changes. Handles are kept, not app ids: two Brave
+  // windows share an id, and telling them apart is the point. Nothing reads a
+  // handle without first checking it is still among the open toplevels -- a
+  // closed window is a dead wrapper in a JS array, not null -- and it leaves
+  // this list when the next activation prunes it rather than the moment it
+  // closes.
+  //
+  // Empty until the first activation after the shell starts, apart from
+  // whatever was active at that moment. A pick made before then falls back to
+  // the compositor's flag and then to list order, which is what every pick did
+  // before this existed.
+  property var activationOrder: []
+
+  Connections {
+    target: ToplevelManager
+    function onActiveToplevelChanged() { root.noteActivated(ToplevelManager.activeToplevel) }
+  }
+
+  function noteActivated(top) {
+    if (!top) return
+    if (!Browsers.ordinaryWindowBrowser(top.appId, root.browsers)) return
+    var open = ToplevelManager.toplevels.values
+    var next = [top]
+    var prev = root.activationOrder
+    for (var i = 0; i < prev.length && next.length < 16; i++) {
+      var old = prev[i]
+      if (!old || old === top || open.indexOf(old) === -1) continue
+      next.push(old)
+    }
+    root.activationOrder = next
+  }
+
   // -------------------------------------------------------------- routing
 
   // The single entry point for an incoming link. Returns a short status string
@@ -529,7 +577,7 @@ Item {
       profile: String(profile || ""),
       private: wantPrivate === true
     }
-    if (!launch(target, url)) return false
+    if (!launch(target, url, true)) return false
 
     var term = remember ? String(remember.term || "").trim() : ""
     if (term) {
@@ -543,8 +591,9 @@ Item {
   }
 
   // A target is a rule-shaped object: {action}, {webapp}, {command}, or
-  // {browser, profile, private}.
-  function launch(target, url) {
+  // {browser, profile, private}. `overlayUp` is true when the picker is on
+  // screen, which changes when a window may be raised, not whether.
+  function launch(target, url, overlayUp) {
     root.lastError = ""
     if (!target) return false
 
@@ -572,7 +621,7 @@ Item {
         root.lastError = "No web app matches “" + target.webapp + "”"
         return false
       }
-      return launchWebapp(app, url)
+      return launchWebapp(app, url, overlayUp === true)
     }
 
     if (target.command) {
@@ -616,29 +665,48 @@ Item {
       return false
     }
 
-    // Kept as state rather than a log line: when a link lands in the wrong
-    // browser the only question that matters is what was actually run, and
-    // `status` is where someone already looks.
+    var open = ToplevelManager.toplevels.values
+    var count = profilesFor(entry.id).length
+
     // A pick with no link means "take me to that browser". If that profile
     // already has a window, going there is the answer; a second window is not.
     // A private pick always opens: the point of it is a fresh private window.
     if (!String(url || "") && target.private !== true) {
-      var existing = Browsers.findProfileToplevel(
-        ToplevelManager.toplevels.values, entry.id, target.profile,
-        profilesFor(entry.id).length)
-
+      var existing = Browsers.findProfileToplevel(open, entry.id, target.profile, count,
+                                                  root.activationOrder)
       if (existing) {
         root.lastLaunch = { browser: entry.id, profile: target.profile, directory: dir,
                             private: false, focused: String(existing.title || "") }
-        focusDelay.toplevel = existing
-        focusDelay.fallbackArgv = argv
-        focusDelay.restart()
+        raiseThenLaunch(existing, [], argv, overlayUp === true)
         return true
       }
     }
 
+    // With a link the browser is told the URL either way; nothing below makes
+    // the launch conditional. What the raise decides is which window the
+    // browser puts the tab in, or whether it opens a new one: Chromium 146+
+    // picks its most recently activated window of any type and, finding an
+    // --app= one, opens a fresh window instead of a tab -- 4/4 on Brave 152
+    // under Hyprland, same argv both ways. Activating the ordinary window
+    // first turned every one of those into a tab, 3/3. Browsers.linkLanding
+    // says when, and which window.
+    var landing = String(url || "")
+      ? Browsers.linkLanding(open, root.activationOrder, entry.id, target.profile, count,
+                             target.private === true)
+      : { raise: null, reason: "" }
+
+    // Kept as state rather than a log line: when a link lands in the wrong
+    // browser -- or the wrong window -- the only question that matters is what
+    // was actually run and why, and `status` is where someone already looks.
     root.lastLaunch = { browser: entry.id, profile: target.profile,
-                        directory: dir, private: target.private === true, argv: argv }
+                        directory: dir, private: target.private === true, argv: argv,
+                        raised: landing.raise ? String(landing.raise.title || "") : "",
+                        reuse: landing.reason }
+
+    if (landing.raise) {
+      raiseThenLaunch(landing.raise, argv, [], overlayUp === true)
+      return true
+    }
     Quickshell.execDetached(argv)
     return true
   }
@@ -656,14 +724,12 @@ Item {
   // the same: the app sits on web.whatsapp.com/ and the link that wants it is a
   // share URL on api.whatsapp.com/send. A `--app=` window cannot be navigated
   // from outside anyway, so the choice is that window or another one.
-  function launchWebapp(app, url) {
+  function launchWebapp(app, url, overlayUp) {
     var existing = Browsers.findAppToplevel(ToplevelManager.toplevels.values,
                                             Browsers.siteKey(app.host))
     if (existing) {
       root.lastLaunch = { webapp: app.id, focused: String(existing.title || "") }
-      focusDelay.toplevel = existing
-      focusDelay.fallbackArgv = []
-      focusDelay.restart()
+      raiseThenLaunch(existing, [], [], overlayUp === true)
       return true
     }
 
@@ -695,23 +761,58 @@ Item {
     return true
   }
 
-  // Deliberately late: the overlay is a layer surface holding exclusive
-  // keyboard focus and is dismissed on the same tick this decision is made.
-  // Raising the browser before that surface is gone gets undone when the
-  // compositor hands focus back to whatever was underneath.
+  // The one place a raise and a launch meet.
   //
-  // Last pick wins if two land inside the window, which is what picking twice
-  // means. A window closed in the meantime is gone from QML by then, and
-  // launching beats raising nothing.
+  // `linkArgv` is launched whatever happens to the raise -- the link is in it,
+  // and a raise that replaced a launch and then did not land would lose the
+  // link, which is the one failure this plugin exists to avoid. `fallbackArgv`
+  // is the launch a link-less pick falls back to when the window it meant to
+  // go to is gone, where 66558c3 left it. A `var` holding a destroyed toplevel
+  // reads null (measured under qmltestrunner), which is what makes `!!top` a
+  // real test for "gone" on the delayed path; the immediate path hands over a
+  // handle read off the live list a moment ago.
+  function raiseOrLaunch(top, linkArgv, fallbackArgv) {
+    if (top) raiseToplevel(top, linkArgv)
+    else if (linkArgv.length) Quickshell.execDetached(linkArgv)
+    else if (fallbackArgv.length) Quickshell.execDetached(fallbackArgv)
+  }
+
+  // Deliberately late when the picker is up: the overlay is a layer surface
+  // holding exclusive keyboard focus and is dismissed on the same tick this
+  // decision is made. Raising the browser before that surface is gone gets
+  // undone when the compositor hands focus back to whatever was underneath --
+  // and with Chromium 146+ "whatever was underneath" being the WhatsApp window
+  // is exactly what sends the link to a new window. A rule firing with no
+  // overlay has nothing to wait for and raises at once, so two rule-routed
+  // links inside the same 220 ms never share a slot.
+  //
+  // The slots are single: a second delayed request inside the window replaces
+  // the first, which for a raise is what picking twice means. A link is never
+  // replaced -- a picker pick followed within 220 ms by a web-app link whose
+  // window exists would otherwise overwrite the pick's argv with an empty one
+  // -- so a link still waiting is launched now, unraised, before the slots
+  // are taken. That costs it the raise, never the launch.
+  function raiseThenLaunch(top, linkArgv, fallbackArgv, delayed) {
+    if (!delayed) { raiseOrLaunch(top, linkArgv || [], fallbackArgv || []); return }
+    if (focusDelay.linkArgv.length) Quickshell.execDetached(focusDelay.linkArgv)
+    focusDelay.toplevel = top
+    focusDelay.linkArgv = linkArgv || []
+    focusDelay.fallbackArgv = fallbackArgv || []
+    focusDelay.restart()
+  }
+
   Timer {
     id: focusDelay
     property var toplevel: null
+    property var linkArgv: []
     property var fallbackArgv: []
     interval: 220
     onTriggered: {
-      if (toplevel) root.raiseToplevel(toplevel)
-      else if (fallbackArgv.length) Quickshell.execDetached(fallbackArgv)
+      var top = toplevel, link = linkArgv, fallback = fallbackArgv
       toplevel = null
+      linkArgv = []
+      fallbackArgv = []
+      root.raiseOrLaunch(top, link, fallback)
     }
   }
 
@@ -723,33 +824,17 @@ Item {
   // handle is the right window, and the window stays exactly where it was.
   //
   // So the protocol is still asked first — synchronous, no dialect, and it is
-  // what works in the picker — and the dispatcher follows for the case it did
-  // not take. Focusing a window that activate() already focused is a no-op.
-  function raiseToplevel(top) {
-    if (!top) return
-    top.activate()
-
-    var cls = String(top.appId || "")
-    if (!cls) return
-    // A Hyprland window selector is a regex, so the class has to survive being
-    // read as one: `brave-web.whatsapp.com__-Default` is full of dots.
-    focusDispatch.selector = "class:^(" + cls.replace(/[\\^$.|?*+()\[\]{}]/g, "\\$&") + ")$"
-    focusDispatch.running = true
-  }
-
-  // Hyprland's Lua config and its classic config take different dispatcher
-  // dialects, and the wrong one is a parse error rather than a focus — which is
-  // why 896d15c dropped hyprctl in the first place. Both are sent, Lua first,
-  // the way omarchy-launch-or-focus sends them; the wrong dialect exits non-zero
-  // without touching a window, so `||` picks the one this machine speaks.
-  Process {
-    id: focusDispatch
-    property string selector: ""
-    command: ["sh", "-c",
-      "hyprctl dispatch "
-      + Util.shellQuote("hl.dsp.focus({ window = \"" + selector.replace(/\\/g, "\\\\") + "\" })")
-      + " >/dev/null 2>&1 || hyprctl dispatch focuswindow "
-      + Util.shellQuote(selector) + " >/dev/null 2>&1"]
+  // what works in the picker — and mclovin-raise follows with the dispatcher
+  // for the case it did not take, then execs `linkArgv` itself. One process
+  // for both is what makes "raise, then launch" an order rather than a race
+  // between a Process exiting and a browser starting. Focusing a window that
+  // activate() already focused is a no-op. The try is there because nothing
+  // may stand between this function being entered and the link being handed
+  // on: a handle that died on this very tick throws, and the argv still runs.
+  function raiseToplevel(top, linkArgv) {
+    try { top.activate() } catch (e) { console.warn("mclovin: activate() failed:", e) }
+    var selector = Browsers.windowSelector(top, Hyprland.toplevels.values)
+    Quickshell.execDetached(["sh", root.raiseScript, selector].concat(linkArgv || []))
   }
 
   function supportsPrivate(browserId) {
@@ -1053,6 +1138,20 @@ Item {
         importable: root.importableCount,
         lastLaunch: root.lastLaunch,
         lastError: root.lastError,
+        // The activation record linkLanding decides from, most recent first.
+        // Empty right after switching into a browser window means handle
+        // identity does not hold on this Quickshell and the record is inert.
+        recentWindows: (function() {
+          var open = ToplevelManager.toplevels.values
+          var out = []
+          for (var i = 0; i < root.activationOrder.length; i++) {
+            var t = root.activationOrder[i]
+            if (!t || open.indexOf(t) === -1) continue
+            out.push({ appId: String(t.appId || ""), title: String(t.title || ""),
+                       activated: t.activated === true })
+          }
+          return out
+        })(),
         browserCompanion: root.browserCompanion,
         profiles: (function() {
           var out = {}
@@ -1102,5 +1201,10 @@ Item {
     refreshBrowsers()
     refreshWebapps()
     refreshBrowserCompanion()
+    // After refreshBrowsers: the record only keeps windows of browsers it
+    // knows. Hyprland's toplevel model stays empty in a shell that never asked
+    // for it, and the address selector reads from it.
+    noteActivated(ToplevelManager.activeToplevel)
+    Hyprland.refreshToplevels()
   }
 }

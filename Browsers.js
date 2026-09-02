@@ -332,14 +332,24 @@ function launchArgs(browserId, execString, url, profileDirectory, wantPrivate) {
 // being open, which it is not.
 function isAppWindowClass(cls) { return String(cls || "").indexOf("__") !== -1 }
 
-// Exact, not prefixed. "google-chrome".indexOf("google-chrome-beta") style
-// matching makes stable Chrome and Chrome Beta each other's windows, so asking
-// for one silently gets you the other; the same for firefox against
-// firefox-esr. A browser whose window id genuinely differs from its desktop id
-// simply falls through to launching, which is the harmless direction.
+// Exact, not prefixed, and case-sensitive. "google-chrome".indexOf(
+// "google-chrome-beta") style matching makes stable Chrome and Chrome Beta each
+// other's windows, so asking for one silently gets you the other; the same for
+// firefox against firefox-esr.
+//
+// Case is what tells a Wayland window from an XWayland one. Chromium's Wayland
+// app id is the desktop id verbatim, `brave-browser`, while its X11 WM_CLASS is
+// capitalised, `Brave-browser` -- and those are different browser processes.
+// Measured here: a second Brave under XWayland had four windows of its own, and
+// with the comparison folding case they were candidates. Raising one did
+// nothing for a link handed to the Wayland instance -- Brave opened a new
+// window anyway, and the focus landed on a password manager popup -- so folding
+// case bought a wrong window and a stolen focus. A browser whose window id
+// genuinely differs from its desktop id simply falls through to launching,
+// which is the harmless direction.
 function isOrdinaryWindowOf(cls, browserId) {
-  var c = String(cls || "").toLowerCase()
-  var id = String(browserId || "").toLowerCase()
+  var c = String(cls || "")
+  var id = String(browserId || "")
   if (!c || !id || isAppWindowClass(c)) return false
   return c === id
 }
@@ -370,22 +380,71 @@ function geckoTitleProfile(title) {
   return ""
 }
 
+// Which installed browser an ordinary window belongs to: its desktop id, or ""
+// for an --app= window, a PWA, or anything that is not a browser. The
+// activation record in Service.qml keeps only these. Recording every window
+// would let a few minutes of terminal switching push the last Brave window out
+// of a bounded list, and the browser's window is the one the record is for.
+function ordinaryWindowBrowser(cls, browsers) {
+  var list = browsers || []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && isOrdinaryWindowOf(cls, list[i].id)) return String(list[i].id)
+  }
+  return ""
+}
+
+// The browser's ordinary windows, most recently activated first.
+//
+// `order` is the service's record of ToplevelManager.activeToplevel over time,
+// most recent first; the protocol itself carries no history. Windows the
+// record has never seen follow it: the one the compositor flags active goes
+// ahead of everything, since it is the current one whatever the record missed,
+// and the rest keep list order, which is the order every pick used before
+// there was a record.
+//
+// Membership in `toplevels` is checked before a handle is read. A handle in a
+// plain JS array whose window has closed is not null the way a `property var`
+// becomes null -- it stays truthy, reads undefined, and throws on a method
+// call (measured under qmltestrunner). The live list is the only thing that
+// says whether a recorded window still exists.
+function ordinaryToplevelsByRecency(toplevels, order, browserId) {
+  var open = toplevels || []
+  var history = order || []
+  var out = []
+  var i, top
+
+  for (i = 0; i < history.length; i++) {
+    top = history[i]
+    if (!top || open.indexOf(top) === -1 || out.indexOf(top) !== -1) continue
+    if (isOrdinaryWindowOf(top.appId, browserId)) out.push(top)
+  }
+  for (i = 0; i < open.length; i++) {
+    top = open[i]
+    if (!top || out.indexOf(top) !== -1 || !isOrdinaryWindowOf(top.appId, browserId)) continue
+    if (top.activated) out.unshift(top)
+    else out.push(top)
+  }
+  return out
+}
+
 // Given the compositor's list of open windows, the one that already belongs to
 // this browser and profile, or null. Wayland toplevels rather than a compositor
 // query: `appId`, `title` and `activate()` come from the foreign-toplevel
 // protocol, so this needs no hyprctl, no JSON, no dispatcher dialect, and no
 // round trip — the answer is available at the moment the choice is made.
-function findProfileToplevel(toplevels, browserId, profileName, profileCount) {
+//
+// `order` is optional and only the Chromium branch reads it. Gecko keeps the
+// compositor's flag and then list order: a Firefox window takes a link on its
+// own whichever one it is, so nothing downstream depends on the choice.
+function findProfileToplevel(toplevels, browserId, profileName, profileCount, order) {
   var list = toplevels || []
-  var gecko = isFirefoxFamily(browserId)
   var wanted = String(profileName || "")
-  var first = null
 
-  for (var i = 0; i < list.length; i++) {
-    var top = list[i]
-    if (!top || !isOrdinaryWindowOf(top.appId, browserId)) continue
-
-    if (gecko) {
+  if (isFirefoxFamily(browserId)) {
+    var first = null
+    for (var i = 0; i < list.length; i++) {
+      var top = list[i]
+      if (!top || !isOrdinaryWindowOf(top.appId, browserId)) continue
       // Evaluated for every candidate, including when no profile is pinned:
       // a stock Firefox reports no profiles at all, and skipping the check in
       // that case is exactly how a Private Browsing window gets focused for an
@@ -393,19 +452,110 @@ function findProfileToplevel(toplevels, browserId, profileName, profileCount) {
       var found = geckoTitleProfile(top.title)
       if (!found) continue
       if (wanted && found !== wanted) continue
-    } else if (wanted && Number(profileCount) > 1) {
-      // Chromium-family windows report the same appId and title shape whatever
-      // profile they show, so with several profiles there is nothing to match
-      // on and launching beats focusing the wrong one.
-      continue
+      if (top.activated) return top
+      if (!first) first = top
     }
-
-    // The protocol carries no focus history, so "most recently used" is not
-    // answerable. The window the compositor has active is the one case that is.
-    if (top.activated) return top
-    if (!first) first = top
+    return first
   }
-  return first
+
+  // Chromium-family windows report the same appId and title shape whatever
+  // profile they show, so with several profiles there is nothing to match on
+  // and launching beats focusing the wrong one.
+  if (wanted && Number(profileCount) > 1) return null
+
+  var recent = ordinaryToplevelsByRecency(list, order, browserId)
+  return recent.length ? recent[0] : null
+}
+
+// ------------------------------------------------------ where a link lands
+//
+// Chromium 146 and later hand a forwarded URL to the profile's most recently
+// activated browser window of ANY type: GetExistingBrowserForOpenBehavior() in
+// chrome/browser/ui/startup/startup_browser_creator_impl.cc takes
+// GetLastActiveBrowser() with no window-type filter, and OpenTabsInBrowser()
+// opens a fresh window when that browser is not TYPE_NORMAL. Up to M145 this
+// went through FindTabbedBrowser(), which skipped app windows, and a link
+// always became a tab (CL 7279203, crbug 431671320). The Linux branch that
+// would still prefer a normal window on the current workspace is dead under
+// Wayland, where GetCurrentWorkspace() answers "". So on Hyprland: focus the
+// WhatsApp --app= window, pick Brave · 44 for a link, and Brave opens a second
+// window with the argv that made a tab a minute earlier. Measured 4/4 on Brave
+// 152 with one profile; workspace and monitor irrelevant, activation order the
+// only input. The app window is this plugin's own doing -- launchWebapp
+// focuses it on purpose -- so a WhatsApp link primes the miss for the next
+// link routed to Brave.
+//
+// Activating the ordinary window right before the launch puts it back at the
+// front of Chromium's order and the URL becomes a tab, 3/3. So the question
+// here is not "does an app window exist" -- one left on another workspace and
+// not touched since does no harm -- but whether this browser's ordinary
+// window is still the last thing activated. The protocol shows appId, title
+// and a single `activated` flag, so that is answered from the outside in: if
+// the window the link is bound for is the one the compositor has active,
+// nothing of the browser's was activated after it and the link lands there on
+// its own. Anything else -- an --app= window, a PWA, undocked DevTools, or
+// only a terminal -- might have, and raising costs nothing when it had not:
+// the tab lands in the same window either way.
+//
+// What this cannot see, and how each degrades: a window.open popup reports the
+// ordinary class and is a candidate here, so when it was the last window used
+// it is the one raised and Chromium still opens a new window -- today's
+// behaviour, no worse. An incognito window is likewise indistinguishable on a
+// single-profile browser. With several profiles nothing is raised, pinned or
+// not: Chromium's order is per profile, and activating a window makes its
+// profile the browser's last-used one, so an unpinned link would follow the
+// raise into a profile the browser would not have chosen -- worse than the
+// second window. In every case `raise` is only ever additional to the launch,
+// never a replacement for it.
+function linkLanding(toplevels, order, browserId, profileName, profileCount, wantPrivate) {
+  function none(reason) { return { raise: null, reason: reason } }
+
+  if (!isChromiumFamily(browserId)) return none("not Chromium: the link joins a window on its own")
+  if (wantPrivate) return none("private: a new window is the point")
+  if (Number(profileCount) > 1) {
+    return none(profileCount + " profiles, and Chromium windows do not say which one they show")
+  }
+
+  var top = findProfileToplevel(toplevels, browserId, profileName, profileCount, order)
+  if (!top) return none("no ordinary window of " + browserId + " is open")
+  if (top.activated) return none("already active: the link lands there on its own")
+
+  var active = null
+  var list = toplevels || []
+  for (var i = 0; i < list.length; i++) if (list[i] && list[i].activated) { active = list[i]; break }
+  return {
+    raise: top,
+    reason: "active window is " + (active ? String(active.appId || "?") : "none")
+  }
+}
+
+// A Hyprland window selector is a regex, so the class has to survive being
+// read as one: `brave-web.whatsapp.com__-Default` is full of dots.
+function classSelector(cls) {
+  var c = String(cls || "")
+  if (!c) return ""
+  return "class:^(" + c.replace(/[\\^$.|?*+()\[\]{}]/g, "\\$&") + ")$"
+}
+
+// The Hyprland selector that reaches this window and no other. `hyprlandToplevels`
+// is Hyprland.toplevels.values: each entry pairs a HyprlandToplevel, whose
+// `address` is the window's address in bare hex ("55bedbe16bc0" for the window
+// `hyprctl clients` lists as 0x55bedbe16bc0), with `wayland`, the same Toplevel
+// handle ToplevelManager hands out. By address, because a class selector
+// focuses whichever window Hyprland lists first -- fine when any window of the
+// profile will do, wrong with a link in hand, when the window that gets
+// focused is the window that gets the tab. Class is the fallback for a window
+// Hyprland's model does not know, which is where every raise went before.
+function windowSelector(top, hyprlandToplevels) {
+  if (!top) return ""
+  var list = hyprlandToplevels || []
+  for (var i = 0; i < list.length; i++) {
+    var h = list[i]
+    if (!h || h.wayland !== top) continue
+    var address = String(h.address || "").replace(/^0x/, "")
+    if (address) return "address:0x" + address
+  }
+  return classSelector(top.appId)
 }
 
 // --------------------------------------------------------------- web apps

@@ -705,8 +705,9 @@ underscore is what keeps a web app from ever counting as the browser being open.
 Raising one does take `hyprctl`. The protocol's own `activate()` lands while
 the picker is up, because the shell holds the keyboard at that moment, and does
 nothing when a rule fires with no overlay on screen. So both are sent: the
-protocol first, then the dispatcher, in the two dialects a Lua config and a
-classic config speak.
+protocol first, then `mclovin-raise`, which tries the dispatcher in the two
+dialects a Lua config and a classic config speak and runs the browser itself
+right after, so the focus is always ahead of the launch.
 
 Two limits worth stating plainly, because both fail towards opening a window
 rather than towards the wrong one:
@@ -714,11 +715,45 @@ rather than towards the wrong one:
 - **Chromium-family windows do not say which profile they show.** With one
   profile every ordinary window is that profile and raising it is safe. With
   several there is nothing to match on, so mclovin launches instead of
-  guessing. An incognito window is likewise indistinguishable from an ordinary
-  one, so on a single-profile browser it can be the window that gets raised.
+  guessing — and a link pinned to one of those profiles can still open a new
+  window when the last window of that profile was a web app. An incognito
+  window is likewise indistinguishable from an ordinary one, so on a
+  single-profile browser it can be the window that gets raised.
 - **Firefox does say**, in its title, so its profiles are told apart — and a
   private window is skipped, in any language, by requiring the brand segment to
   be exactly "Mozilla Firefox" rather than matching English wording.
+
+## A link joins the window you were using
+
+Chromium 146 changed which window a link handed to a running browser goes to.
+It used to be the profile's last used ordinary window, always. It is now the
+profile's most recently *activated* window of any kind, and when that is a web
+app's `--app=` window, a popup, or undocked DevTools, the browser opens a
+brand-new window rather than a tab. On X11 a workspace check still steers it
+back to an ordinary window; under Wayland that check answers nothing, so on
+Hyprland the outcome depends only on which of the browser's windows you touched
+last. Focus WhatsApp, click a link bound for Brave · 44, get a second Brave
+window; focus Brave first, get a tab. Same command line both times.
+
+mclovin routes around it. When a link is bound for a Chromium-family browser
+with one profile and its ordinary window is not the active one, that window is
+raised first and the browser is told the URL immediately after, by the same
+process, so the order is guaranteed and the link is launched whatever the raise
+did. Which ordinary window is the one the browser would have chosen is the
+compositor's activation history, which the protocol does not keep, so the
+service records it as windows are activated. `status` shows the record under
+`recentWindows` and the decision under `lastLaunch.reuse`.
+
+What it cannot do, and says so in `lastLaunch.reuse`:
+
+- **Several profiles.** Chromium windows do not say which profile they show, so
+  with more than one profile no window is raised, pinned or not. The link is
+  launched as before and lands wherever the browser puts it.
+- **Popups and the like.** A `window.open` popup, undocked DevTools, or a second
+  Brave instance under XWayland reports the same class as an ordinary window.
+  If one of those was the last window used, the browser still opens a new one.
+- **Firefox is untouched.** It has no `--app=` windows and a link joins its
+  window on its own.
 
 ## Sending a link to a web app
 

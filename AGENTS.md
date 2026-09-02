@@ -361,6 +361,7 @@ python3 test/test_native_host.py
 python3 test/test_companion_manage.py
 sh test/test_zoom_open.sh
 sh test/test_open_fallback.sh
+sh test/test_raise.sh
 ```
 
 **`qmltestrunner` must be the Qt6 one, by absolute path.** The one `qtchooser`
@@ -441,6 +442,17 @@ for a Zoom action while the native host served three destination kinds.
   the real ones run against the sandbox's own desktop entries through
   `XDG_DATA_HOME` and launch something, which is indistinguishable from the code
   under test having chosen it.
+- **A destroyed toplevel is null only in a `property var`.** Measured under
+  qmltestrunner: a `var` property holding a destroyed QObject reads as `null`,
+  but the same handle inside a plain JS array stays truthy, reads `undefined`,
+  and a method call on it throws `TypeError`. `activationOrder` holds handles
+  in an array, so nothing may call `activate()` on what it stores — check
+  membership in `ToplevelManager.toplevels.values` first and read the live one.
+- **`HyprlandToplevel.address` has no `0x`.** It is bare hex (`55bedbe16bc0`)
+  for the window `hyprctl clients` lists as `0x55bedbe16bc0`, so a selector is
+  `"address:0x" + address`. `Hyprland.toplevels` stays empty in a shell that
+  never called `Hyprland.refreshToplevels()`; the class selector is the
+  fallback for that reason.
 
 ## House style
 

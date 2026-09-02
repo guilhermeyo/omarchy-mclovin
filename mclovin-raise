@@ -1,0 +1,39 @@
+#!/bin/sh
+# Focus a Hyprland window, then run a command -- in that order, in this process.
+#
+#   mclovin-raise <window-selector> [command ...]
+#
+# Chromium 146 and later hand a forwarded URL to the profile's most recently
+# activated window of any type, and open a fresh window when that one is not an
+# ordinary browser window -- a web app's --app= window, say. Activating the
+# ordinary window first puts it back at the front of Chromium's order and the
+# URL becomes a tab: measured 3/3 on Brave 152 under Hyprland 0.56, with no
+# delay between the focus and the launch beyond the sequence below. Doing both
+# here rather than from two processes started by the shell is what makes
+# "first" mean first: hyprctl has answered before the browser is exec'd.
+#
+# The command runs whatever the focus did. `;` not `&&`, and a `timeout` on
+# each dispatch: a machine without hyprctl, a window that closed, a selector
+# that no longer matches, a compositor socket that does not answer -- each
+# costs at worst the new window this exists to avoid, never the link. An empty
+# selector skips the focus; no command means a raise on its own.
+#
+# Hyprland's Lua config and its classic config take different dispatcher
+# dialects, and the wrong one is a parse error rather than a focus -- which is
+# why 896d15c dropped hyprctl in the first place. Both are sent, Lua first, the
+# way omarchy-launch-or-focus sends them; the wrong dialect exits non-zero
+# without touching a window. The selector is a Lua string literal in the first
+# and a plain argument in the second, so it is escaped for one and passed
+# verbatim to the other.
+
+selector=${1-}
+[ $# -eq 0 ] || shift
+
+if [ -n "$selector" ]; then
+  escaped=$(printf '%s' "$selector" | sed 's/[\\"]/\\&/g')
+  timeout 2 hyprctl dispatch "hl.dsp.focus({ window = \"$escaped\" })" >/dev/null 2>&1 ||
+    timeout 2 hyprctl dispatch focuswindow "$selector" >/dev/null 2>&1 ||
+    :
+fi
+
+[ $# -eq 0 ] || exec "$@"

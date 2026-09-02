@@ -58,7 +58,7 @@ jobs:
       - name: Shell syntax
         run: |
           set -eu
-          for f in mclovin-open mclovin-webapp-fix test/test_zoom_open.sh; do
+          for f in mclovin-open mclovin-webapp-fix mclovin-raise test/test_zoom_open.sh test/test_raise.sh; do
             sh -n "$f"
             echo "sh -n ok: $f"
           done
@@ -198,6 +198,12 @@ jobs:
           QT_QUICK_BACKEND: software
         run: /usr/lib/qt6/bin/qmltestrunner -input test/tst_router.qml
 
+      - name: Browser window tests (QML)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: /usr/lib/qt6/bin/qmltestrunner -input test/tst_browsers.qml
+
       - name: Browser companion tests (node)
         run: node test/test_browser_companion.js
 
@@ -212,3 +218,9 @@ jobs:
       # /usr/bin, so the only host binaries it can reach are coreutils and jq.
       - name: Zoom direct launcher tests (POSIX sh)
         run: sh test/test_zoom_open.sh
+
+      # Runs the real mclovin-raise against a stubbed hyprctl and a fake
+      # browser on a pinned PATH, the same shape as the Zoom test. Four of its
+      # seconds are the hung-compositor case waiting out two 2 s timeouts.
+      - name: Raise-then-launch shim tests (POSIX sh)
+        run: sh test/test_raise.sh
